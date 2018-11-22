@@ -1,0 +1,8 @@
+*.swp
+*.pyc
+.DS_Store
+/.coverage
+/dist/
+/build/
+/MANIFEST
+/wagtail_whoosh.egg-info/
