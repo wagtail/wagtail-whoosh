@@ -10,3 +10,5 @@ WAGTAILSEARCH_BACKENDS = {
     },
 }
 ```
+
+Set `./manage.py update_index` as cron job
