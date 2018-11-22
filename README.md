@@ -1,4 +1,4 @@
-## Wagtail Whoosh Backend
+## Search backend for Wagtail CMS using Whoosh engine.
 
 After installing this package, add `wagtail_whoosh` to INSTALLED_APPS. And then config `WAGTAILSEARCH_BACKENDS`
 
