@@ -1,5 +1,7 @@
 ## Search backend for Wagtail CMS using Whoosh engine.
 
+`pip install git+https://github.com/tjwalch/wagtail-whoosh`
+
 After installing this package, add `wagtail_whoosh` to INSTALLED_APPS. And then config `WAGTAILSEARCH_BACKENDS`
 
 ```python
