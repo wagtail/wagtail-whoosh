@@ -13,11 +13,6 @@ except ImportError:
         return value
 
 
-def get_postgresql_connections():
-    return [connection for connection in connections.all()
-            if connection.vendor == 'postgresql']
-
-
 def get_descendant_models(model):
     """
     Returns all descendants of a model, including the model itself.

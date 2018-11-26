@@ -6,3 +6,6 @@
 /build/
 /MANIFEST
 /wagtail_whoosh.egg-info/
+/.idea/
+/search_index/
+/.eggs/

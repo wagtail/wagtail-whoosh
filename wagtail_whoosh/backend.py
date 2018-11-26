@@ -15,6 +15,7 @@ from django.utils.datetime_safe import datetime
 from django.utils.encoding import force_text
 
 from wagtail.core.models import Page
+from wagtail.search import index
 from wagtail.search.backends.base import (BaseSearchBackend,
                                           BaseSearchQueryCompiler,
                                           BaseSearchResults)
@@ -23,7 +24,6 @@ from wagtail.search.query import (And, MatchAll, Not, Or, SearchQueryShortcut,
                                   Term)
 from wagtail.search.utils import ADD, AND, OR
 
-from whoosh import index
 from whoosh.analysis import StemmingAnalyzer
 from whoosh.fields import BOOLEAN, DATETIME
 from whoosh.fields import ID as WHOOSH_ID
@@ -34,10 +34,10 @@ from whoosh.highlight import ContextFragmenter, HtmlFormatter
 from whoosh.highlight import highlight as whoosh_highlight
 from whoosh.qparser import FuzzyTermPlugin, QueryParser
 from whoosh.searching import ResultsPage
-from whoosh.writing import AsyncWriter
+from whoosh.writing import AsyncWriter, IndexWriter
 
 from .utils import (WEIGHTS_VALUES, get_ancestors_content_types_pks,
-                    get_content_type_pk, get_descendants_content_types_pks,
+                    get_content_type_pk, get_descendant_models,
                     get_postgresql_connections, get_weight, unidecode)
 
 ID = "id"
@@ -140,12 +140,32 @@ class Index:
     def add_item(self, obj):
         self.add_items(self.model, [obj])
 
+    def _delete_parent_model_data(self, model, objs):
+        parent_models = model._meta.get_parent_list()
+
+        for parent_model in parent_models:
+            model_ct = get_model_ct(parent_model)
+            query_string = " OR ".join([
+                "%s.%s" % (model_ct, obj.pk)
+                for obj in objs
+            ])
+
+            try:
+                index = self.backend.index.refresh()
+                writer = index.writer()
+                writer.delete_by_query(q=self.backend.parser.parse('%s:"%s"' % (ID, query_string)))
+                writer.commit()
+            except Exception as e:
+                raise
+
     def add_items(self, model, objs):
         for obj in objs:
             obj._body_ = self.prepare_body(obj)
 
-        self.index = self.backend.index.refresh()
-        writer = AsyncWriter(self.index)
+        self._delete_parent_model_data(model, objs)
+
+        index = self.backend.index.refresh()
+        writer = AsyncWriter(index)
 
         for obj in objs:
             doc = {
@@ -155,20 +175,8 @@ class Index:
                 'text': force_text(obj._body_),
             }
 
-            core_page_doc = None
-            if isinstance(obj, Page):
-                core_page_obj = Page.objects.get(pk=obj.pk)
-                core_page_doc = {
-                    ID: get_identifier(core_page_obj),
-                    DJANGO_CT: get_model_ct(core_page_obj),
-                    DJANGO_ID: force_text(obj.pk),
-                    'text': force_text(obj._body_),
-                }
-
             try:
                 writer.update_document(**doc)
-                if core_page_doc:
-                    writer.update_document(**core_page_doc)
             except Exception as e:
                 raise
 
@@ -176,13 +184,13 @@ class Index:
             writer.commit()
 
     def delete_item(self, obj):
-        self.index = self.backend.index.refresh()
         whoosh_id = get_identifier(obj)
-        core_page_whoosh_id = get_identifier(Page.objects.get(pk=obj.pk))
 
         try:
-            self.index.delete_by_query(q=self.parser.parse('%s:"%s"' % (ID, whoosh_id)))
-            self.index.delete_by_query(q=self.parser.parse('%s:"%s"' % (ID, core_page_whoosh_id)))
+            index = self.backend.index.refresh()
+            writer = index.writer()
+            writer.delete_by_query(q=self.backend.parser.parse('%s:"%s"' % (ID, whoosh_id)))
+            writer.commit()
         except Exception as e:
             raise
 
@@ -205,7 +213,9 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         if isinstance(query, Term):
             return unidecode(query.term)
         if isinstance(query, Not):
-            raise NotImplementedError
+            return ' NOT {}'.format(
+                self.build_whoosh_query(query.subquery, config)
+            )
         if isinstance(query, And):
             return ' AND '.join([
                 self.build_whoosh_query(subquery, config)
@@ -222,11 +232,19 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             % self.query.__class__.__name__)
 
     def search(self, backend, start, stop):
+        # TODO: Handle MatchAll nested inside other search query classes.
+        if isinstance(self.query, MatchAll):
+            return self.queryset[start:stop]
+
         config = backend.get_config()
         queryset = self.queryset
 
         index = backend.index.refresh()
-        model_query = '%s:%s' % (DJANGO_CT, get_model_ct(queryset.model))
+        models = get_descendant_models(queryset.model)
+        model_query = ' OR '.join([
+            '%s:%s' % (DJANGO_CT, get_model_ct(model))
+            for model in models
+        ])
 
         narrow_searcher = index.searcher()
         model_results = narrow_searcher.search(
@@ -289,10 +307,11 @@ class WhooshSearchRebuilder:
         self.index = index
 
     def start(self):
+        self.index.backend.refresh_index()
         return self.index
 
     def finish(self):
-        pass
+        self.index.backend.refresh_index()
 
 
 class WhooshSearchBackend(BaseSearchBackend):
@@ -310,6 +329,7 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.path = params.get("PATH")
 
         self.setup()
+        self.refresh_index()
 
     def setup(self):
         """
@@ -381,7 +401,11 @@ class WhooshSearchBackend(BaseSearchBackend):
         pass  # Not needed.
 
     def refresh_index(self):
-        pass  # Not needed.
+        if not self.setup_complete:
+            self.setup()
+        else:
+            self.index = self.index.refresh()
+            self.index.optimize()
 
     def add(self, obj):
         self.get_index_for_object(obj).add_item(obj)
