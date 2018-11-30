@@ -38,7 +38,7 @@ from whoosh.writing import AsyncWriter, IndexWriter
 
 from .utils import (WEIGHTS_VALUES, get_ancestors_content_types_pks,
                     get_content_type_pk, get_descendant_models,
-                    get_postgresql_connections, get_weight, unidecode)
+                    get_weight, unidecode)
 
 ID = "id"
 DJANGO_CT = "django_ct"
