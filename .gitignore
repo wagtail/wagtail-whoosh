@@ -7,5 +7,5 @@
 /MANIFEST
 /wagtail_whoosh.egg-info/
 /.idea/
-/search_index/
+/test_search_index/
 /.eggs/

@@ -1,0 +1,15 @@
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
+global-exclude Thumbs.db
+global-exclude Desktop.ini
+global-exclude *.swp
+global-exclude *~
+global-exclude *.bak
+include .editorconfig
+include LICENSE
+include Makefile
+include requirements-dev.txt
+include runtests.py
+include tox.ini
+graft tests

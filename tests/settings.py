@@ -24,7 +24,7 @@ INSTALLED_APPS = [
 WAGTAILSEARCH_BACKENDS = {
     'default': {
         'BACKEND': 'wagtail_whoosh.backend',
-        'PATH': 'search_index'
+        'PATH': 'test_search_index'
     },
 }
 
