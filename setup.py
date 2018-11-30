@@ -12,11 +12,11 @@ setup(
     version='0.1',
     packages=find_packages(exclude=['tests']),
     include_package_data=True,
-    license='BSD License',  # example license
+    license='BSD License',
     description='Whoosh backend for Wagtail CMS',
-    long_description=README,
-    url='https://github.com/tjwalch/wagtail-whoosh',
-    author='MichaelYin',
+    long_description='Whoosh backend for Wagtail CMS',
+    url='https://github.com/michael-yin/wagtail-whoosh',
+    author='Michael Yin',
     author_email='admin@michaelyin.info',
     classifiers=[
         'Environment :: Web Environment',
@@ -31,7 +31,7 @@ setup(
         'Topic :: Internet :: WWW/HTTP :: Dynamic Content',
     ],
     install_requires=[
-        "wagtail==2.1",
+        "wagtail>=2.0,<=2.2",
         "Whoosh==2.7.4",
     ],
     test_suite='runtests.runtests'
