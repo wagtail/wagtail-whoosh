@@ -1,0 +1,36 @@
+language: python
+cache: pip
+dist: trusty
+
+matrix:
+  include:
+   - env: TOXENV=dj111-wagtail20-py34
+     python: 3.4
+   - env: TOXENV=dj111-wagtail20-py35
+     python: 3.5
+   - env: TOXENV=dj111-wagtail20-py36
+     python: 3.6
+   - env: TOXENV=dj111-wagtail21-py34
+     python: 3.4
+   - env: TOXENV=dj111-wagtail21-py35
+     python: 3.5
+   - env: TOXENV=dj111-wagtail21-py36
+     python: 3.6
+   - env: TOXENV=dj20-wagtail20-py34
+     python: 3.4
+   - env: TOXENV=dj20-wagtail20-py35
+     python: 3.5
+   - env: TOXENV=dj20-wagtail20-py36
+     python: 3.6
+   - env: TOXENV=dj20-wagtail21-py34
+     python: 3.4
+   - env: TOXENV=dj20-wagtail21-py35
+     python: 3.5
+   - env: TOXENV=dj20-wagtail21-py36
+     python: 3.6
+
+install:
+  - pip install tox codecov
+
+script:
+  tox
