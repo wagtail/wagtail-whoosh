@@ -259,7 +259,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         searcher = index.searcher()
         results = searcher.search(
             backend.parser.parse(self.build_whoosh_query(config=config)),
-            **search_kwargs,
+            **search_kwargs
         )
 
         django_id_ls = [r['django_id'] for r in results]
