@@ -12,4 +12,3 @@ from wagtail.search.query import MATCH_ALL, And, Boost, Filter, Not, Or, PlainTe
 
 class TestWhooshSearchBackend(BackendTests, TestCase):
     backend_path = 'wagtail_whoosh.backend'
-
