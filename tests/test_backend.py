@@ -13,8 +13,3 @@ from wagtail.search.query import MATCH_ALL, And, Boost, Filter, Not, Or, PlainTe
 class TestWhooshSearchBackend(BackendTests, TestCase):
     backend_path = 'wagtail_whoosh.backend'
 
-    def test_search_on_individual_field(self):
-        """
-        Wagtail-whoosh does not support this feature so did this to let it pass the unit test
-        """
-        pass

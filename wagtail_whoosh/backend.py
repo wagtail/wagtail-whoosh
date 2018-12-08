@@ -3,18 +3,13 @@ import re
 import shutil
 from warnings import warn
 
-from django.contrib.postgres.search import SearchQuery as WhooshSearchQuery
-from django.contrib.postgres.search import SearchRank, SearchVector
 from django.db import (DEFAULT_DB_ALIAS, NotSupportedError, connections,
-                       transaction)
+                       models, transaction)
 from django.db.models import F, Manager, Q, TextField, Value
-from django.db.models.constants import LOOKUP_SEP
-from django.db.models.functions import Cast
 from django.utils import six
 from django.utils.datetime_safe import datetime
 from django.utils.encoding import force_text
 
-from wagtail.core.models import Page
 from wagtail.search import index
 from wagtail.search.backends.base import (BaseSearchBackend,
                                           BaseSearchQueryCompiler,
@@ -24,21 +19,16 @@ from wagtail.search.query import (And, MatchAll, Not, Or, SearchQueryShortcut,
                                   Term)
 from wagtail.search.utils import ADD, AND, OR
 
-from whoosh.analysis import StemmingAnalyzer
-from whoosh.fields import BOOLEAN, DATETIME
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import (IDLIST, KEYWORD, NGRAM, NGRAMWORDS, NUMERIC, TEXT,
                            Schema)
 from whoosh.filedb.filestore import FileStorage, RamStorage
-from whoosh.highlight import ContextFragmenter, HtmlFormatter
-from whoosh.highlight import highlight as whoosh_highlight
 from whoosh.qparser import FuzzyTermPlugin, QueryParser
-from whoosh.searching import ResultsPage
 from whoosh.writing import AsyncWriter, IndexWriter
 
 from .utils import (WEIGHTS_VALUES, get_ancestors_content_types_pks,
-                    get_content_type_pk, get_descendant_models,
-                    get_weight, unidecode)
+                    get_content_type_pk, get_descendant_models, get_weight,
+                    unidecode)
 
 ID = "id"
 DJANGO_CT = "django_ct"
@@ -203,6 +193,20 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields_names = list(self.get_fields_names())
+
+    def get_fields_names(self):
+        model = self.queryset.model
+        fields_names = self.fields or [field.field_name for field in
+                                       model.get_searchable_search_fields()]
+        # Check if the field exists (this will filter out indexed callables)
+        for field_name in fields_names:
+            try:
+                model._meta.get_field(field_name)
+            except models.fields.FieldDoesNotExist:
+                continue
+            else:
+                yield field_name
 
     def build_whoosh_query(self, query=None, config=None):
         if query is None:
@@ -272,7 +276,13 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 
         queryset = queryset.filter(pk__in=django_id_ls)
         queryset = queryset.order_by('-pk')
-        return queryset[start:stop]
+
+        # support search on specific fields
+        if self.fields:
+            q = self.build_database_filter()
+            queryset = queryset.filter(q)
+
+        return queryset.distinct()[start:stop]
 
     def _process_lookup(self, field, lookup, value):
         return Q(**{field.get_attname(self.queryset.model) +
@@ -290,6 +300,37 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             q = ~q
 
         return q
+
+    def build_single_term_filter(self, term):
+        term_query = models.Q()
+        for field_name in self.fields_names:
+            term_query |= models.Q(**{field_name + '__icontains': term})
+        return term_query
+
+    def build_database_filter(self, query=None):
+        if query is None:
+            query = self.query
+
+        if isinstance(self.query, MatchAll):
+            return models.Q()
+
+        if isinstance(query, SearchQueryShortcut):
+            return self.build_database_filter(query.get_equivalent())
+        if isinstance(query, Term):
+            if query.boost != 1:
+                warn('Database search backend does not support term boosting.')
+            return self.build_single_term_filter(query.term)
+        if isinstance(query, Not):
+            return ~self.build_database_filter(query.subquery)
+        if isinstance(query, And):
+            return AND(self.build_database_filter(subquery)
+                       for subquery in query.subqueries)
+        if isinstance(query, Or):
+            return OR(self.build_database_filter(subquery)
+                      for subquery in query.subqueries)
+        raise NotImplementedError(
+            '`%s` is not supported by the database search backend.'
+            % self.query.__class__.__name__)
 
 
 class WhooshSearchResults(BaseSearchResults):
