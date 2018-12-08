@@ -1,12 +1,13 @@
 import os
 from setuptools import find_packages, setup
+from wagtail_whoosh import __version__
 
 # allow setup.py to be run from any path
 os.chdir(os.path.normpath(os.path.join(os.path.abspath(__file__), os.pardir)))
 
 setup(
     name='wagtail-whoosh',
-    version='0.1.2',
+    version=__version__,
     packages=find_packages(exclude=['tests']),
     include_package_data=True,
     license='BSD License',
