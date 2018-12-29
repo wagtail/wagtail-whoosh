@@ -19,3 +19,7 @@ WAGTAILSEARCH_BACKENDS = {
 
 Set `./manage.py update_index` as cron job
 
+## Sponsor
+
+[Tomas Walch](https://github.com/tjwalch)
+
