@@ -1,6 +1,6 @@
 ## Search backend for Wagtail CMS using Whoosh engine.
 
-[![Build Status](https://travis-ci.org/michael-yin/wagtail-whoosh.svg?branch=master)](https://travis-ci.org/michael-yin/wagtail-whoosh)
+[![Build Status](https://travis-ci.org/AccordBox/wagtail-whoosh.svg?branch=master)](https://travis-ci.org/AccordBox/wagtail-whoosh)
 
 ## How to use
 
