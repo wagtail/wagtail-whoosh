@@ -3,11 +3,9 @@ import re
 import shutil
 from warnings import warn
 
-from django.db import (DEFAULT_DB_ALIAS, NotSupportedError, connections,
-                       models, transaction)
-from django.db.models import F, Manager, Q, TextField, Value
+from django.db import DEFAULT_DB_ALIAS, models
+from django.db.models import Manager, Q
 from django.utils import six
-from django.utils.datetime_safe import datetime
 from django.utils.encoding import force_text
 
 from wagtail.search import index
@@ -17,18 +15,15 @@ from wagtail.search.backends.base import (BaseSearchBackend,
 from wagtail.search.index import RelatedFields, SearchField
 from wagtail.search.query import (And, MatchAll, Not, Or, SearchQueryShortcut,
                                   Term)
-from wagtail.search.utils import ADD, AND, OR
+from wagtail.search.utils import AND, OR
 
 from whoosh.fields import ID as WHOOSH_ID
-from whoosh.fields import (IDLIST, KEYWORD, NGRAM, NGRAMWORDS, NUMERIC, TEXT,
-                           Schema)
-from whoosh.filedb.filestore import FileStorage, RamStorage
+from whoosh.fields import TEXT, Schema
+from whoosh.filedb.filestore import FileStorage
 from whoosh.qparser import FuzzyTermPlugin, QueryParser
-from whoosh.writing import AsyncWriter, IndexWriter
+from whoosh.writing import AsyncWriter
 
-from .utils import (WEIGHTS_VALUES, get_ancestors_content_types_pks,
-                    get_content_type_pk, get_descendant_models, get_weight,
-                    unidecode)
+from .utils import get_descendant_models, get_weight, unidecode
 
 ID = "id"
 DJANGO_CT = "django_ct"
