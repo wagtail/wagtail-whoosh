@@ -1,10 +1,11 @@
 import os
 import re
 import shutil
+from collections import OrderedDict
 from warnings import warn
 
 from django.db import DEFAULT_DB_ALIAS, models
-from django.db.models import Manager, Q
+from django.db.models import Case, Manager, Q, When
 from django.utils import six
 from django.utils.encoding import force_text
 
@@ -230,7 +231,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             '`%s` is not supported by the whoosh search backend.'
             % self.query.__class__.__name__)
 
-    def search(self, backend, start, stop):
+    def search(self, backend, start, stop, score_field):
         # TODO: Handle MatchAll nested inside other search query classes.
         if isinstance(self.query, MatchAll):
             return self.queryset[start:stop]
@@ -260,24 +261,32 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             backend.parser.parse(self.build_whoosh_query(config=config)),
             **search_kwargs
         )
-
-        django_id_ls = [r['django_id'] for r in results]
-
+        # Results are returned by order of relevance, OrderedDict used to keep track
+        score_map = OrderedDict([(r['django_id'], r.score) for r in results])
         narrow_searcher.close()
         searcher.close()
 
+        django_id_ls = score_map.keys()
         if not django_id_ls:
             return queryset.none()
 
-        queryset = queryset.filter(pk__in=django_id_ls)
-        queryset = queryset.order_by('-pk')
+        # Retrieve the results from the db, but preserve the order by score
+        preserved_order = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(django_id_ls)])
+        queryset = queryset.filter(pk__in=django_id_ls).order_by(preserved_order)
 
         # support search on specific fields
         if self.fields:
             q = self.build_database_filter()
             queryset = queryset.filter(q)
 
-        return queryset.distinct()[start:stop]
+        queryset = queryset.distinct()[start:stop]
+
+        # Add score annotations if required
+        if score_field:
+            for obj in queryset:
+                setattr(obj, score_field, score_map.get(str(obj.pk)))
+
+        return queryset
 
     def _process_lookup(self, field, lookup, value):
         return Q(**{field.get_attname(self.queryset.model) +
@@ -330,8 +339,8 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 
 class WhooshSearchResults(BaseSearchResults):
     def _do_search(self):
-        return list(self.query_compiler.search(self.backend,
-                                               self.start, self.stop))
+        return list(self.query_compiler.search(
+            self.backend, self.start, self.stop, self._score_field))
 
     def _do_count(self):
         return self.query_compiler.search(
