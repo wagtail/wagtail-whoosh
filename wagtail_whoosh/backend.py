@@ -141,7 +141,7 @@ class Index:
                 writer.delete_by_query(q=self.backend.parser.parse('%s:"%s"' % (ID, query_string)))
                 writer.commit()
             except Exception as e:
-                raise
+                raise e
 
     def add_items(self, model, objs):
         for obj in objs:
@@ -163,7 +163,7 @@ class Index:
             try:
                 writer.update_document(**doc)
             except Exception as e:
-                raise
+                raise e
 
         if len(objs) > 0:
             writer.commit()
@@ -177,7 +177,7 @@ class Index:
             writer.delete_by_query(q=self.backend.parser.parse('%s:"%s"' % (ID, whoosh_id)))
             writer.commit()
         except Exception as e:
-            raise
+            raise e
 
     def __str__(self):
         return self.name
