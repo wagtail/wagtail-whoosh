@@ -344,7 +344,7 @@ class WhooshSearchResults(BaseSearchResults):
 
     def _do_count(self):
         return self.query_compiler.search(
-            self.backend, None, None).count()
+            self.backend, None, None, None).count()
 
 
 class WhooshSearchRebuilder:
