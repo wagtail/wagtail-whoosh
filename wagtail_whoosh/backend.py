@@ -245,7 +245,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             'limit': None
         }
 
-        searcher = index.searcher()
+        searcher = backend.index.searcher()
         results = searcher.search(
             backend.parser.parse(self.build_whoosh_query(config=config)),
             **search_kwargs
