@@ -17,6 +17,7 @@ from wagtail.search.query import (And, MatchAll, Not, Or, SearchQueryShortcut,
                                   Term)
 from wagtail.search.utils import AND, OR
 
+from whoosh import query as wquery
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
@@ -238,32 +239,18 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         config = backend.get_config()
         queryset = self.queryset
 
-        index = backend.index.refresh()
         models = get_descendant_models(queryset.model)
-        model_query = ' OR '.join([
-            '%s:%s' % (DJANGO_CT, get_model_ct(model))
-            for model in models
-        ])
-
-        narrow_searcher = index.searcher()
-        model_results = narrow_searcher.search(
-            backend.parser.parse(force_text(model_query)),
-            limit=None
-        )
-
-        search_kwargs = {}
-        search_kwargs['filter'] = model_results
-        search_kwargs['limit'] = None
+        search_kwargs = {
+            'filter': wquery.Or([wquery.Term(DJANGO_CT, get_model_ct(m)) for m in models]),
+            'limit': None
+        }
 
         searcher = index.searcher()
         results = searcher.search(
             backend.parser.parse(self.build_whoosh_query(config=config)),
             **search_kwargs
         )
-
         django_id_ls = [r['django_id'] for r in results]
-
-        narrow_searcher.close()
         searcher.close()
 
         if not django_id_ls:
@@ -365,7 +352,7 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.path = params.get("PATH")
 
         self.setup()
-        self.refresh_index()
+        self.refresh_index(optimize=False)
 
     def setup(self):
         """
@@ -436,11 +423,13 @@ class WhooshSearchBackend(BaseSearchBackend):
     def add_type(self, model):
         pass  # Not needed.
 
-    def refresh_index(self):
+    def refresh_index(self, optimize=True):
         if not self.setup_complete:
             self.setup()
         else:
             self.index = self.index.refresh()
+        if optimize:
+            # optimize is a locking operation, shouldn't be called unless recreating the index
             self.index.optimize()
 
     def add(self, obj):
