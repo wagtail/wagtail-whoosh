@@ -1,21 +1,23 @@
 import os
 import re
 import shutil
+from collections import OrderedDict
 
 from django.db import DEFAULT_DB_ALIAS, models
-from django.db.models import Manager, Q
+from django.db.models import Case, Manager, Q, When
 from django.utils import six
 from django.utils.encoding import force_text
 
 from wagtail.search.backends.base import (
     BaseSearchBackend, BaseSearchQueryCompiler, BaseSearchResults)
 from wagtail.search.index import AutocompleteField, FilterField, RelatedFields, SearchField
+from wagtail.search.query import And, Boost, MatchAll, Not, Or, PlainText
 
 from whoosh import query as wquery
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
-from whoosh.qparser import FuzzyTermPlugin, QueryParser
+from whoosh.qparser import FuzzyTermPlugin, MultifieldParser, QueryParser
 from whoosh.writing import AsyncWriter
 
 from .utils import get_descendant_models, get_weight, unidecode
@@ -221,51 +223,20 @@ class WhooshIndex:
 
 
 class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
-    DEFAULT_OPERATOR = 'and'
+    DEFAULT_OPERATOR = 'or'
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields_names = list(self.get_fields_names())
+        self.fields_names = list(self._get_fields_names())
+        self.schema = ModelSchema(self.queryset.model).build_schema()
 
-    def get_fields_names(self):
+    def _get_fields_names(self):
         model = self.queryset.model
-        fields_names = self.fields or [field.field_name for field in
-                                       model.get_searchable_search_fields()]
-        # Check if the field exists (this will filter out indexed callables)
-        for field_name in fields_names:
-            try:
-                model._meta.get_field(field_name)
-            except models.fields.FieldDoesNotExist:
-                continue
-            else:
-                yield field_name
+        return [field.field_name for field in model.get_searchable_search_fields()]
 
-    def build_whoosh_query(self, query=None, config=None):
-        if query is None:
-            query = self.query
-
-        # if isinstance(query, SearchQueryShortcut):
-        #     return self.build_whoosh_query(query.get_equivalent(), config)
-        # if isinstance(query, Term):
-        #     return unidecode(query.term)
-        # if isinstance(query, Not):
-        #     return ' NOT {}'.format(
-        #         self.build_whoosh_query(query.subquery, config)
-        #     )
-        # if isinstance(query, And):
-        #     return ' AND '.join([
-        #         self.build_whoosh_query(subquery, config)
-        #         for subquery in query.subqueries
-        #     ])
-        # if isinstance(query, Or):
-        #     return ' OR '.join([
-        #         self.build_whoosh_query(subquery, config)
-        #         for subquery in query.subqueries
-        #     ])
-
-        raise NotImplementedError(
-            '`%s` is not supported by the whoosh search backend.'
-            % self.query.__class__.__name__)
+    def get_whoosh_query(self):
+        parser = MultifieldParser(self.fields_names, self.schema)
+        return parser.parse(force_text(self.query.query_string))
 
     def search(self, backend, start, stop):
         # TODO: Handle MatchAll nested inside other search query classes.
@@ -303,6 +274,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         return queryset.distinct()[start:stop]
 
     def _process_lookup(self, field, lookup, value):
+        # FIXME whooshify
         return Q(**{field.get_attname(self.queryset.model) +
                     '__' + lookup: value})
 
@@ -326,40 +298,47 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             term_query |= models.Q(**{field_name + '__icontains': term})
         return term_query
 
-    def build_database_filter(self, query=None):
-        if query is None:
-            query = self.query
+    def _build_whoosh_query2(self, query, field):
+        if isinstance(query, MatchAll):
+            pass
 
-        # if isinstance(self.query, MatchAll):
-        #     return models.Q()
-        #
-        # if isinstance(query, SearchQueryShortcut):
-        #     return self.build_database_filter(query.get_equivalent())
-        # if isinstance(query, Term):
-        #     if query.boost != 1:
-        #         warn('Database search backend does not support term boosting.')
-        #     return self.build_single_term_filter(query.term)
-        # if isinstance(query, Not):
-        #     return ~self.build_database_filter(query.subquery)
-        # if isinstance(query, And):
-        #     return AND(self.build_database_filter(subquery)
-        #                for subquery in query.subqueries)
-        # if isinstance(query, Or):
-        #     return OR(self.build_database_filter(subquery)
-        #               for subquery in query.subqueries)
         raise NotImplementedError(
-            '`%s` is not supported by the database search backend.'
+            '`%s` is not supported by the whoosh search backend.'
             % self.query.__class__.__name__)
 
 
 class WhooshSearchResults(BaseSearchResults):
     def _do_search(self):
-        return list(self.query_compiler.search(self.backend,
-                                               self.start, self.stop))
+        # Probably better way to get the model
+        model = self.query_compiler.queryset.model
+        query = self.query_compiler.get_whoosh_query()
+        index = self.backend.storage.open_index(indexname=model._meta.label)
+        with index.searcher() as searcher:
+            results = searcher.search(query)
+            print(results)
+            score_map = OrderedDict([(r['django_id'], r.score) for r in results])
+        self.backend.storage.close()
+
+        django_id_ls = score_map.keys()
+        if not django_id_ls:
+            return []
+        # Retrieve the results from the db, but preserve the order by score
+        preserved_order = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(django_id_ls)])
+        results = model.objects.filter(pk__in=django_id_ls).order_by(preserved_order)
+        print(results)
+        results = results.distinct()[self.start:self.stop]
+
+        # Add score annotations if required
+        if self._score_field:
+            for obj in results:
+                setattr(obj, self._score_field, score_map.get(str(obj.pk)))
+        return results
 
     def _do_count(self):
-        return self.query_compiler.search(
-            self.backend, None, None).count()
+        # TODO
+        return 1
+        # return self.query_compiler.search(
+        #     self.backend, None, None).count()
 
 
 class WhooshSearchRebuilder:
