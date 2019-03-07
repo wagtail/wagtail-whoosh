@@ -1,17 +1,15 @@
 import os
 import re
 import shutil
-from warnings import warn
 
 from django.db import DEFAULT_DB_ALIAS, models
 from django.db.models import Manager, Q
 from django.utils import six
 from django.utils.encoding import force_text
 
-from wagtail.search import index
 from wagtail.search.backends.base import (
     BaseSearchBackend, BaseSearchQueryCompiler, BaseSearchResults)
-from wagtail.search.index import RelatedFields, SearchField
+from wagtail.search.index import AutocompleteField, FilterField, RelatedFields, SearchField
 
 from whoosh import query as wquery
 from whoosh.fields import ID as WHOOSH_ID
@@ -23,7 +21,7 @@ from whoosh.writing import AsyncWriter
 from .utils import get_descendant_models, get_weight, unidecode
 
 ID = "id"
-DJANGO_CT = "django_ct"
+DJANGO_CT = "django_content_type"
 DJANGO_ID = "django_id"
 DOCUMENT_FIELD = "text"
 IDENTIFIER_REGEX = re.compile("^[\w\d_]+\.[\w\d_]+\.[\w\d-]+$")
@@ -67,21 +65,73 @@ def get_model_ct(model):
     return "%s.%s" % get_model_ct_tuple(model)
 
 
-class Index:
+def get_boost(value):
+    if value:
+        return float(value)
+    return 1.0
+
+
+class ModelSchema:
+    def __init__(self, model):
+        self.model = model
+
+    def build_schema(self):
+        schema_fields = {
+            'id': WHOOSH_ID(stored=True, unique=True),
+            DJANGO_CT: WHOOSH_ID(stored=True),
+            DJANGO_ID: WHOOSH_ID(stored=True, unique=True),
+            **dict(self.define_search_fields()),
+        }
+        return Schema(**schema_fields)
+
+    def define_search_fields(self):
+        for field in self.model.get_search_fields():
+            if isinstance(field, SearchField):
+                yield field.field_name, TEXT(phrase=field.partial_match, stored=True, field_boost=get_boost(field.boost))
+            if isinstance(field, RelatedFields):
+                # TODO
+                pass
+            if isinstance(field, FilterField):
+                # TODO
+                pass
+            if isinstance(field, AutocompleteField):
+                # TODO
+                pass
+
+
+class WhooshIndex:
+    # All methods here atm aren't reusable i.e. WhooshIndex(params).method() opens, operates then closes
     def __init__(self, backend, model, db_alias=None):
         self.backend = backend
-        self.model = model
+        self.models = get_descendant_models(model)
         if db_alias is None:
             db_alias = DEFAULT_DB_ALIAS
         self.db_alias = db_alias
         self.name = model._meta.label
-        self.search_fields = self.model.get_search_fields()
+        self.indicies = dict(self._open_indicies())
+
+    def _open_indicies(self):
+        storage = self.backend.storage
+        for model in self.models:
+            label = model._meta.label
+            # if index doesn't exist, create
+            if not storage.index_exists(indexname=label):
+                schema = ModelSchema(model).build_schema()
+                storage.create_index(schema, indexname=label)
+            # return the opened index to work with
+            yield label, storage.open_index(indexname=label)
+
+    def _close_indicies(self):
+        self.backend.storage.close()
 
     def add_model(self, model):
-        pass
+        # Close the indicies openeded when initialiased
+        self._close_indicies()
 
     def refresh(self):
-        pass
+        for index in self.indicies():
+            index.refresh()
+        self._close_indicies()
 
     def prepare_value(self, value):
         if isinstance(value, str):
@@ -93,79 +143,69 @@ class Index:
                              for item in value.values())
         return force_text(value)
 
-    def prepare_field(self, obj, field):
-        if isinstance(field, SearchField):
-            yield (unidecode(self.prepare_value(field.get_value(obj))),
-                   get_weight(field.boost))
-        elif isinstance(field, RelatedFields):
-            sub_obj = field.get_value(obj)
-            if sub_obj is None:
-                return
-            if isinstance(sub_obj, Manager):
-                sub_objs = sub_obj.all()
-            else:
-                if callable(sub_obj):
-                    sub_obj = sub_obj()
-                sub_objs = [sub_obj]
-            for sub_obj in sub_objs:
-                for sub_field in field.fields:
-                    for value in self.prepare_field(sub_obj, sub_field):
-                        yield value
+    def _get_document_fields(self, model, item):
+        for field in model.get_search_fields():
+            if isinstance(field, SearchField):
+                yield field.field_name, self.prepare_value(field.get_value(item))
+            if isinstance(field, RelatedFields):
+                # TODO
+                pass
+            if isinstance(field, FilterField):
+                # TODO
+                pass
+            if isinstance(field, AutocompleteField):
+                # TODO
+                pass
 
-    def prepare_body(self, obj):
-        body_ls = [
-            value for field in self.search_fields
-            for value, boost in self.prepare_field(obj, field)
-        ]
-        return " ".join(body_ls)
+    def _create_document(self, model, item):
+        return {
+            ID: get_identifier(item),
+            DJANGO_CT: get_model_ct(model),
+            DJANGO_ID: force_text(item.pk),
+            **dict(self._get_document_fields(model, item))
+        }
 
-    def add_item(self, obj):
-        self.add_items(self.model, [obj])
-
-    def _delete_parent_model_data(self, model, objs):
-        parent_models = model._meta.get_parent_list()
-
-        for parent_model in parent_models:
-            model_ct = get_model_ct(parent_model)
-            query_string = " OR ".join([
-                "%s.%s" % (model_ct, obj.pk)
-                for obj in objs
-            ])
-
-            try:
-                index = self.backend.index.refresh()
-                writer = index.writer()
-                writer.delete_by_query(q=self.backend.parser.parse('%s:"%s"' % (ID, query_string)))
-                writer.commit()
-            except Exception as e:
-                raise e
-
-    def add_items(self, model, objs):
-        for obj in objs:
-            obj._body_ = self.prepare_body(obj)
-
-        self._delete_parent_model_data(model, objs)
-
-        index = self.backend.index.refresh()
-        writer = AsyncWriter(index)
-
-        for obj in objs:
-            doc = {
-                ID: get_identifier(obj),
-                DJANGO_CT: get_model_ct(obj),
-                DJANGO_ID: force_text(obj.pk),
-                'text': force_text(obj._body_),
-            }
-
-            try:
-                writer.update_document(**doc)
-            except Exception as e:
-                raise e
-
-        if len(objs) > 0:
+    def add_item(self, item):
+        for model in self.models:
+            doc = self._create_document(model, item)
+            index = self.indicies[model._meta.label]
+            writer = AsyncWriter(index)
+            writer.update_document(**doc)
             writer.commit()
+        self._close_indicies()
+
+    # def prepare_field(self, obj, field):
+    #     if isinstance(field, SearchField):
+    #         yield (unidecode(self.prepare_value(field.get_value(obj))),
+    #                get_weight(field.boost))
+    #     elif isinstance(field, RelatedFields):
+    #         sub_obj = field.get_value(obj)
+    #         if sub_obj is None:
+    #             return
+    #         if isinstance(sub_obj, Manager):
+    #             sub_objs = sub_obj.all()
+    #         else:
+    #             if callable(sub_obj):
+    #                 sub_obj = sub_obj()
+    #             sub_objs = [sub_obj]
+    #         for sub_obj in sub_objs:
+    #             for sub_field in field.fields:
+    #                 for value in self.prepare_field(sub_obj, sub_field):
+    #                     yield value
+
+    def add_items(self, model, items):
+        models = get_descendant_models(model)
+        for model in models:
+            index = self.indicies[model._meta.label]
+            writer = AsyncWriter(index)
+            for item in items:
+                doc = self._create_document(model, item)
+                writer.update_document(**doc)
+            writer.commit()
+        self._close_indicies()
 
     def delete_item(self, obj):
+        # TODO
         whoosh_id = get_identifier(obj)
 
         try:
@@ -348,19 +388,13 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.post_limit = params.get("POST_LIMIT", 128 * 1024 * 1024)
         self.path = params.get("PATH")
 
-        self.setup()
+        self.check()
         self.refresh_index(optimize=False)
 
-    def setup(self):
-        """
-        Defers loading until needed.
-        """
-        new_index = False
-
+    def check(self):
         # Make sure the index is there.
         if self.use_file_storage and not os.path.exists(self.path):
             os.makedirs(self.path)
-            new_index = True
 
         if self.use_file_storage and not os.access(self.path, os.W_OK):
             raise IOError(
@@ -371,37 +405,17 @@ class WhooshSearchBackend(BaseSearchBackend):
         if self.use_file_storage:
             self.storage = FileStorage(self.path)
 
-        self.schema = self.build_schema()
-        self.content_field_name = "text"
+        # self.schema = self.build_schema()
+        # self.content_field_name = "text"
 
-        self.parser = QueryParser(self.content_field_name, schema=self.schema)
-        self.parser.add_plugins([FuzzyTermPlugin])
-
-        if new_index is True:
-            self.index = self.storage.create_index(self.schema)
-        else:
-            try:
-                self.index = self.storage.open_index(schema=self.schema)
-            except index.EmptyIndexError:
-                self.index = self.storage.create_index(self.schema)
-
-        self.setup_complete = True
-
-    def build_schema(self):
-        schema_fields = {
-            'id': WHOOSH_ID(stored=True, unique=True),
-            'django_ct': WHOOSH_ID(stored=True),
-            'django_id': WHOOSH_ID(stored=True),
-            'text': TEXT(stored=True),
-        }
-
-        return Schema(**schema_fields)
+        # self.parser = QueryParser(self.content_field_name, schema=self.schema)
+        # self.parser.add_plugins([FuzzyTermPlugin])
 
     def get_config(self):
         return self.params.get('SEARCH_CONFIG')
 
     def get_index_for_model(self, model, db_alias=None):
-        return Index(self, model, db_alias)
+        return WhooshIndex(self, model, db_alias)
 
     def get_index_for_object(self, obj):
         return self.get_index_for_model(obj._meta.model, obj._state.db)
@@ -418,23 +432,23 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.setup()
 
     def add_type(self, model):
-        pass  # Not needed.
+        self.get_index_for_model(model).add_model(model)
 
     def refresh_index(self, optimize=True):
-        if not self.setup_complete:
-            self.setup()
-        else:
-            self.index = self.index.refresh()
-        if optimize:
-            # optimize is a locking operation, shouldn't be called unless recreating the index
-            self.index.optimize()
+        pass
+        # if not self.setup_complete:
+        #     self.setup()
+        # else:
+        #     self.index = self.index.refresh()
+        # if optimize:
+        #     # optimize is a locking operation, shouldn't be called unless recreating the index
+        #     self.index.optimize()
 
     def add(self, obj):
         self.get_index_for_object(obj).add_item(obj)
 
     def add_bulk(self, model, obj_list):
-        if obj_list:
-            self.get_index_for_object(obj_list[0]).add_items(model, obj_list)
+        self.get_index_for_model(model).add_items(model, obj_list)
 
     def delete(self, obj):
         self.get_index_for_object(obj).delete_item(obj)

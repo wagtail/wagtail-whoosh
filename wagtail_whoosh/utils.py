@@ -14,6 +14,7 @@ except ImportError:
 
 
 def get_descendant_models(model):
+    # FIXME Only get CONCRETE descendants
     """
     Returns all descendants of a model, including the model itself.
     """
