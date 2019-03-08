@@ -8,19 +8,19 @@ from django.db.models import Case, Manager, Q, When
 from django.utils import six
 from django.utils.encoding import force_text
 
+from wagtail.search import query as wagtail_query
 from wagtail.search.backends.base import (
     BaseSearchBackend, BaseSearchQueryCompiler, BaseSearchResults)
 from wagtail.search.index import AutocompleteField, FilterField, RelatedFields, SearchField
-from wagtail.search.query import And, Boost, MatchAll, Not, Or, PlainText
 
-from whoosh import query as wquery
+from whoosh import query as whoosh_query
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
 from whoosh.qparser import FuzzyTermPlugin, MultifieldParser, QueryParser
 from whoosh.writing import AsyncWriter
 
-from .utils import get_boost, get_descendant_models, get_indexed_parents
+from .utils import get_boost, get_descendant_models, get_indexed_parents, unidecode
 
 ID = "id"
 DJANGO_CT = "django_content_type"
@@ -122,7 +122,7 @@ class WhooshIndex:
         self.backend.storage.close()
 
     def add_model(self, model):
-        # Close the indicies openeded when initialiased
+        # Close the indicies opened when initialiased
         self._close_indicies()
 
     def refresh(self):
@@ -217,8 +217,6 @@ class WhooshIndex:
 
 
 class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
-    DEFAULT_OPERATOR = 'or'
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.field_names = self._get_fields_names()
@@ -228,11 +226,27 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         model = self.queryset.model
         return [field.field_name for field in model.get_searchable_search_fields()]
 
-    def get_whoosh_query(self):
+    def _build_inner_query(self):
+        if isinstance(self.query, wagtail_query.PlainText):
+            return force_text(self.query.query_string)
+        if isinstance(self.query, wagtail_query.Not):
+            return force_text(whoosh_query.Not(self.query.subquery))
+
+        raise NotImplementedError(
+            '`%s` is not supported by the whoosh search backend.'
+            % self.query.__class__.__name__)
+
+    def _get_group(self):
         from whoosh import qparser
-        parser = MultifieldParser(self.field_names, self.schema)
-        # parser = QueryParser('description', self.schema)
-        return parser.parse(force_text(self.query.query_string))
+        if isinstance(self.query, wagtail_query.Not):
+            return qparser.AndNotGroup
+        return qparser.AndGroup
+
+    def get_whoosh_query(self):
+        group = self._get_group()
+        parser = MultifieldParser(self.field_names, self.schema, group=group)
+        parser.add_plugin(FuzzyTermPlugin())
+        return parser.parse(self._build_inner_query())
 
     def _process_lookup(self, field, lookup, value):
         # FIXME whooshify
@@ -259,21 +273,13 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             term_query |= models.Q(**{field_name + '__icontains': term})
         return term_query
 
-    def _build_whoosh_query2(self, query, field):
-        if isinstance(query, MatchAll):
-            pass
-
-        raise NotImplementedError(
-            '`%s` is not supported by the whoosh search backend.'
-            % self.query.__class__.__name__)
-
 
 class WhooshSearchResults(BaseSearchResults):
     def _do_search(self):
         # Probably better way to get the model
         model = self.query_compiler.queryset.model
         query = self.query_compiler.get_whoosh_query()
-
+        print(query)
         index = self.backend.storage.open_index(indexname=model._meta.label)
         with index.searcher() as searcher:
             results = searcher.search(query, limit=None)
@@ -291,7 +297,8 @@ class WhooshSearchResults(BaseSearchResults):
 
         self.backend.storage.close()
 
-        django_ids = [r[0] for r in sorted(score_map.items(), key=lambda id_sc: id_sc[1], reverse=True)]
+        django_ids = [r[0] for r in sorted(
+            score_map.items(), key=lambda id_sc: id_sc[1], reverse=True)]
         if not django_ids:
             return []
         # Retrieve the results from the db, but preserve the order by score
