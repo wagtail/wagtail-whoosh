@@ -20,7 +20,7 @@ from whoosh.filedb.filestore import FileStorage
 from whoosh.qparser import FuzzyTermPlugin, MultifieldParser, QueryParser
 from whoosh.writing import AsyncWriter
 
-from .utils import get_boost, get_indexed_parents
+from .utils import get_boost, get_descendant_models, get_indexed_parents
 
 ID = "id"
 DJANGO_CT = "django_content_type"
@@ -221,7 +221,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields_names = list(self._get_fields_names())
+        self.field_names = self._get_fields_names()
         self.schema = ModelSchema(self.queryset.model).build_schema()
 
     def _get_fields_names(self):
@@ -229,43 +229,10 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         return [field.field_name for field in model.get_searchable_search_fields()]
 
     def get_whoosh_query(self):
-        parser = MultifieldParser(self.fields_names, self.schema)
+        from whoosh import qparser
+        parser = MultifieldParser(self.field_names, self.schema)
+        # parser = QueryParser('description', self.schema)
         return parser.parse(force_text(self.query.query_string))
-
-    def search(self, backend, start, stop):
-        # TODO: Handle MatchAll nested inside other search query classes.
-        # if isinstance(self.query, MatchAll):
-        #     return self.queryset[start:stop]
-
-        config = backend.get_config()
-        queryset = self.queryset
-
-        models = get_descendant_models(queryset.model)
-        search_kwargs = {
-            'filter': wquery.Or([wquery.Term(DJANGO_CT, get_model_ct(m)) for m in models]),
-            'limit': None
-        }
-
-        searcher = backend.index.searcher()
-        results = searcher.search(
-            backend.parser.parse(self.build_whoosh_query(config=config)),
-            **search_kwargs
-        )
-        django_id_ls = [r['django_id'] for r in results]
-        searcher.close()
-
-        if not django_id_ls:
-            return queryset.none()
-
-        queryset = queryset.filter(pk__in=django_id_ls)
-        queryset = queryset.order_by('-pk')
-
-        # support search on specific fields
-        if self.fields:
-            q = self.build_database_filter()
-            queryset = queryset.filter(q)
-
-        return queryset.distinct()[start:stop]
 
     def _process_lookup(self, field, lookup, value):
         # FIXME whooshify
@@ -310,10 +277,21 @@ class WhooshSearchResults(BaseSearchResults):
         index = self.backend.storage.open_index(indexname=model._meta.label)
         with index.searcher() as searcher:
             results = searcher.search(query, limit=None)
-            score_map = OrderedDict([(r['django_id'], r.score) for r in results])
+            score_map = dict([(r['django_id'], r.score) for r in results])
+
+        descendants = get_descendant_models(model)
+        for descendant in descendants:
+            query_compiler = WhooshSearchQueryCompiler(
+                descendant.objects.none(), self.query_compiler.query)
+            query = query_compiler.get_whoosh_query()
+            index = self.backend.storage.open_index(indexname=descendant._meta.label)
+            with index.searcher() as searcher:
+                results = searcher.search(query, limit=None)
+                score_map.update(dict([(r['django_id'], r.score) for r in results]))
+
         self.backend.storage.close()
 
-        django_ids = score_map.keys()
+        django_ids = [r[0] for r in sorted(score_map.items(), key=lambda id_sc: id_sc[1], reverse=True)]
         if not django_ids:
             return []
         # Retrieve the results from the db, but preserve the order by score

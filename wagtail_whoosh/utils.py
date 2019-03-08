@@ -1,3 +1,7 @@
+from functools import lru_cache
+
+from django.apps import apps
+
 from wagtail.search.index import Indexed
 
 try:
@@ -8,11 +12,22 @@ except ImportError:
         return value
 
 
+@lru_cache()
 def get_indexed_parents(model):
     models = [model]
     if model._meta.parents:
         models += [m[0] for m in model._meta.parents.items() if issubclass(m[0], Indexed)]
     return models
+
+
+@lru_cache()
+def get_descendant_models(model):
+    """
+    Returns all descendants of a model
+    """
+    descendant_models = {other_model for other_model in apps.get_models()
+                         if issubclass(other_model, model)}
+    return descendant_models
 
 
 def get_boost(value):
