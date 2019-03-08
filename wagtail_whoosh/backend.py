@@ -20,7 +20,7 @@ from whoosh.filedb.filestore import FileStorage
 from whoosh.qparser import FuzzyTermPlugin, MultifieldParser, QueryParser
 from whoosh.writing import AsyncWriter
 
-from .utils import get_descendant_models, get_weight, unidecode
+from .utils import get_boost, get_indexed_parents
 
 ID = "id"
 DJANGO_CT = "django_content_type"
@@ -67,12 +67,6 @@ def get_model_ct(model):
     return "%s.%s" % get_model_ct_tuple(model)
 
 
-def get_boost(value):
-    if value:
-        return float(value)
-    return 1.0
-
-
 class ModelSchema:
     def __init__(self, model):
         self.model = model
@@ -89,7 +83,8 @@ class ModelSchema:
     def define_search_fields(self):
         for field in self.model.get_search_fields():
             if isinstance(field, SearchField):
-                yield field.field_name, TEXT(phrase=field.partial_match, stored=True, field_boost=get_boost(field.boost))
+                yield field.field_name, TEXT(
+                    phrase=field.partial_match, stored=True, field_boost=get_boost(field.boost))
             if isinstance(field, RelatedFields):
                 # TODO
                 pass
@@ -105,7 +100,7 @@ class WhooshIndex:
     # All methods here atm aren't reusable i.e. WhooshIndex(params).method() opens, operates then closes
     def __init__(self, backend, model, db_alias=None):
         self.backend = backend
-        self.models = get_descendant_models(model)
+        self.models = get_indexed_parents(model)
         if db_alias is None:
             db_alias = DEFAULT_DB_ALIAS
         self.db_alias = db_alias
@@ -196,12 +191,11 @@ class WhooshIndex:
     #                     yield value
 
     def add_items(self, model, items):
-        models = get_descendant_models(model)
-        for model in models:
-            index = self.indicies[model._meta.label]
+        for add_model in self.models:
+            index = self.indicies[add_model._meta.label]
             writer = AsyncWriter(index)
             for item in items:
-                doc = self._create_document(model, item)
+                doc = self._create_document(add_model, item)
                 writer.update_document(**doc)
             writer.commit()
         self._close_indicies()
@@ -312,20 +306,19 @@ class WhooshSearchResults(BaseSearchResults):
         # Probably better way to get the model
         model = self.query_compiler.queryset.model
         query = self.query_compiler.get_whoosh_query()
+
         index = self.backend.storage.open_index(indexname=model._meta.label)
         with index.searcher() as searcher:
-            results = searcher.search(query)
-            print(results)
+            results = searcher.search(query, limit=None)
             score_map = OrderedDict([(r['django_id'], r.score) for r in results])
         self.backend.storage.close()
 
-        django_id_ls = score_map.keys()
-        if not django_id_ls:
+        django_ids = score_map.keys()
+        if not django_ids:
             return []
         # Retrieve the results from the db, but preserve the order by score
-        preserved_order = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(django_id_ls)])
-        results = model.objects.filter(pk__in=django_id_ls).order_by(preserved_order)
-        print(results)
+        preserved_order = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(django_ids)])
+        results = model.objects.filter(pk__in=django_ids).order_by(preserved_order)
         results = results.distinct()[self.start:self.stop]
 
         # Add score annotations if required
