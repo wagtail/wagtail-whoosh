@@ -13,6 +13,7 @@ from wagtail.search.backends.base import (
     BaseSearchBackend, BaseSearchQueryCompiler, BaseSearchResults)
 from wagtail.search.index import AutocompleteField, FilterField, RelatedFields, SearchField
 
+from whoosh import qparser
 from whoosh import query as whoosh_query
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import TEXT, Schema
@@ -22,49 +23,8 @@ from whoosh.writing import AsyncWriter
 
 from .utils import get_boost, get_descendant_models, get_indexed_parents, unidecode
 
-ID = "id"
-DJANGO_CT = "django_content_type"
-DJANGO_ID = "django_id"
+PK = "pk"
 DOCUMENT_FIELD = "text"
-IDENTIFIER_REGEX = re.compile("^[\w\d_]+\.[\w\d_]+\.[\w\d-]+$")
-
-
-def get_facet_field_name(fieldname):
-    if fieldname in [ID, DJANGO_ID, DJANGO_CT]:
-        return fieldname
-
-    return "%s_exact" % fieldname
-
-
-def get_identifier(obj_or_string):
-    """
-    Get an unique identifier for the object or a string representing the
-    object.
-    If not overridden, uses <app_label>.<object_name>.<pk>.
-    """
-    if isinstance(obj_or_string, six.string_types):
-        if not IDENTIFIER_REGEX.match(obj_or_string):
-            raise AttributeError(
-                "Provided string '%s' is not a valid identifier." % obj_or_string
-            )
-
-        return obj_or_string
-
-    return "%s.%s" % (get_model_ct(obj_or_string), obj_or_string._get_pk_val())
-
-
-def get_model_ct_tuple(model):
-    # Deferred models should be identified as if they were the underlying model.
-    model_name = (
-        model._meta.concrete_model._meta.model_name
-        if hasattr(model, "_deferred") and model._deferred
-        else model._meta.model_name
-    )
-    return (model._meta.app_label, model_name)
-
-
-def get_model_ct(model):
-    return "%s.%s" % get_model_ct_tuple(model)
 
 
 class ModelSchema:
@@ -73,14 +33,12 @@ class ModelSchema:
 
     def build_schema(self):
         schema_fields = {
-            'id': WHOOSH_ID(stored=True, unique=True),
-            DJANGO_CT: WHOOSH_ID(stored=True),
-            DJANGO_ID: WHOOSH_ID(stored=True, unique=True),
-            **dict(self.define_search_fields()),
+            PK: WHOOSH_ID(stored=True, unique=True),
+            **dict(self._define_search_fields()),
         }
         return Schema(**schema_fields)
 
-    def define_search_fields(self):
+    def _define_search_fields(self):
         for field in self.model.get_search_fields():
             if isinstance(field, SearchField):
                 yield field.field_name, TEXT(
@@ -122,7 +80,7 @@ class WhooshIndex:
         self.backend.storage.close()
 
     def add_model(self, model):
-        # Close the indicies opened when initialiased
+        # Adding done on initialisation
         self._close_indicies()
 
     def refresh(self):
@@ -156,9 +114,7 @@ class WhooshIndex:
 
     def _create_document(self, model, item):
         return {
-            ID: get_identifier(item),
-            DJANGO_CT: get_model_ct(model),
-            DJANGO_ID: force_text(item.pk),
+            PK: force_text(item.pk),
             **dict(self._get_document_fields(model, item))
         }
 
@@ -202,12 +158,12 @@ class WhooshIndex:
 
     def delete_item(self, obj):
         # TODO
-        whoosh_id = get_identifier(obj)
+        whoosh_id = ''
 
         try:
             index = self.backend.index.refresh()
             writer = index.writer()
-            writer.delete_by_query(q=self.backend.parser.parse('%s:"%s"' % (ID, whoosh_id)))
+            writer.delete_by_query(q=self.backend.parser.parse('%s:"%s"' % ('', '')))
             writer.commit()
         except Exception as e:
             raise e
@@ -237,7 +193,6 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             % self.query.__class__.__name__)
 
     def _get_group(self):
-        from whoosh import qparser
         if isinstance(self.query, wagtail_query.Not):
             return qparser.AndNotGroup
         return qparser.AndGroup
@@ -249,12 +204,12 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         return parser.parse(self._build_inner_query())
 
     def _process_lookup(self, field, lookup, value):
-        # FIXME whooshify
+        # TODO whooshify
         return Q(**{field.get_attname(self.queryset.model) +
                     '__' + lookup: value})
 
     def _connect_filters(self, filters, connector, negated):
-        pass
+        # TODO
         # if connector == 'AND':
         #     q = Q(*filters)
         # elif connector == 'OR':
@@ -266,6 +221,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         #     q = ~q
         #
         # return q
+        pass
 
     def build_single_term_filter(self, term):
         term_query = models.Q()
@@ -279,7 +235,6 @@ class WhooshSearchResults(BaseSearchResults):
         # Probably better way to get the model
         model = self.query_compiler.queryset.model
         query = self.query_compiler.get_whoosh_query()
-        print(query)
         index = self.backend.storage.open_index(indexname=model._meta.label)
         with index.searcher() as searcher:
             results = searcher.search(query, limit=None)
@@ -340,7 +295,6 @@ class WhooshSearchBackend(BaseSearchBackend):
         super().__init__(params)
         self.params = params
 
-        self.setup_complete = False
         self.use_file_storage = True
         self.post_limit = params.get("POST_LIMIT", 128 * 1024 * 1024)
         self.path = params.get("PATH")
@@ -362,15 +316,6 @@ class WhooshSearchBackend(BaseSearchBackend):
         if self.use_file_storage:
             self.storage = FileStorage(self.path)
 
-        # self.schema = self.build_schema()
-        # self.content_field_name = "text"
-
-        # self.parser = QueryParser(self.content_field_name, schema=self.schema)
-        # self.parser.add_plugins([FuzzyTermPlugin])
-
-    def get_config(self):
-        return self.params.get('SEARCH_CONFIG')
-
     def get_index_for_model(self, model, db_alias=None):
         return WhooshIndex(self, model, db_alias)
 
@@ -385,13 +330,11 @@ class WhooshSearchBackend(BaseSearchBackend):
         elif not self.use_file_storage:
             self.storage.clean()
 
-        # Recreate everything.
-        self.setup()
-
     def add_type(self, model):
         self.get_index_for_model(model).add_model(model)
 
     def refresh_index(self, optimize=True):
+        # TODO
         pass
         # if not self.setup_complete:
         #     self.setup()
