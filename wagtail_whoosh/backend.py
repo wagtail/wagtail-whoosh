@@ -64,7 +64,6 @@ class ModelSchema:
 
 
 class WhooshIndex:
-    # All methods here atm aren't reusable i.e. WhooshIndex(params).method() opens, operates then closes
     def __init__(self, backend, model, db_alias=None):
         self.backend = backend
         self.models = get_indexed_parents(model)
@@ -93,9 +92,8 @@ class WhooshIndex:
         self._close_indicies()
 
     def refresh(self):
-        for index in self.indicies():
+        for index in self.indicies.values():
             index.refresh()
-        self._close_indicies()
 
     def prepare_value(self, value):
         if isinstance(value, str):
@@ -112,9 +110,6 @@ class WhooshIndex:
     def _get_document_fields(self, model, item):
         for field in model.get_search_fields():
             if isinstance(field, (SearchField, AutocompleteField)):
-                if field.field_name == 'yo':
-                    print(field.get_value(item))
-                    print(type(field.get_value(item)))
                 yield field.field_name, self.prepare_value(field.get_value(item))
             if isinstance(field, RelatedFields):
                 value = field.get_value(item)
@@ -155,10 +150,12 @@ class WhooshIndex:
         self._close_indicies()
 
     def delete_item(self, obj):
-        for index in self.indicies:
+        for model in self.models:
+            index = self.indicies[model._meta.label]
             writer = index.writer()
             writer.delete_by_term(PK, obj.pk)
             writer.commit()
+            index.optimize()
         self._close_indicies()
 
     def __str__(self):
@@ -283,10 +280,8 @@ class WhooshSearchResults(BaseSearchResults):
         return results
 
     def _do_count(self):
-        # TODO
-        return 1
-        # return self.query_compiler.search(
-        #     self.backend, None, None).count()
+        # FIXME https://whoosh.readthedocs.io/en/latest/api/collectors.html#whoosh.collectors.Collector.count
+        return len(self._do_search())
 
 
 class WhooshSearchRebuilder:
@@ -294,11 +289,18 @@ class WhooshSearchRebuilder:
         self.index = index
 
     def start(self):
-        self.index.backend.refresh_index()
+        if self.index.backend.destroy_index:
+            # Per the Whoosh mailing list, if wiping out everything from the index,
+            # it's much more efficient to simply delete the index files.
+            shutil.rmtree(self.index.backend.path)
+            os.makedirs(self.index.backend.path)
+        # recreate + open indicies
+        self.index.indicies = dict(self.index._open_indicies())
         return self.index
 
     def finish(self):
-        self.index.backend.refresh_index()
+        self.index.backend.destroy_index = False
+        self.index.refresh()
 
 
 class WhooshSearchBackend(BaseSearchBackend):
@@ -311,11 +313,12 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.params = params
 
         self.use_file_storage = True
-        self.post_limit = params.get("POST_LIMIT", 128 * 1024 * 1024)
         self.path = params.get("PATH")
+        # Flag for rebuilder, we only want the index folder emptied by the
+        # first WhooshSearchRebuilder ran
+        self.destroy_index = True
 
         self.check()
-        self.refresh_index(optimize=False)
 
     def check(self):
         # Make sure the index is there.
@@ -337,27 +340,8 @@ class WhooshSearchBackend(BaseSearchBackend):
     def get_index_for_object(self, obj):
         return self.get_index_for_model(obj._meta.model, obj._state.db)
 
-    def reset_index(self):
-        # Per the Whoosh mailing list, if wiping out everything from the index,
-        # it's much more efficient to simply delete the index files.
-        if self.use_file_storage and os.path.exists(self.path):
-            shutil.rmtree(self.path)
-        elif not self.use_file_storage:
-            self.storage.clean()
-
     def add_type(self, model):
         self.get_index_for_model(model).add_model(model)
-
-    def refresh_index(self, optimize=True):
-        # TODO
-        pass
-        # if not self.setup_complete:
-        #     self.setup()
-        # else:
-        #     self.index = self.index.refresh()
-        # if optimize:
-        #     # optimize is a locking operation, shouldn't be called unless recreating the index
-        #     self.index.optimize()
 
     def add(self, obj):
         self.get_index_for_object(obj).add_item(obj)
