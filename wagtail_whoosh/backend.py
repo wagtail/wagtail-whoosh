@@ -5,13 +5,12 @@ from django.db import DEFAULT_DB_ALIAS, models
 from django.db.models import Case, Manager, Q, When
 from django.utils.encoding import force_text
 
-from wagtail.search import query as wagtail_query
 from wagtail.search.backends.base import (
     BaseSearchBackend, BaseSearchQueryCompiler, BaseSearchResults)
 from wagtail.search.index import AutocompleteField, FilterField, RelatedFields, SearchField
+from wagtail.search.query import And, Not, Or, PlainText
 
 from whoosh import qparser
-from whoosh import query as whoosh_query
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
@@ -180,26 +179,44 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         model = self.queryset.model
         return [field.field_name for field in model.get_searchable_search_fields()]
 
-    def _build_inner_query(self):
-        if isinstance(self.query, wagtail_query.PlainText):
-            return force_text(self.query.query_string)
-        if isinstance(self.query, wagtail_query.Not):
-            return force_text(whoosh_query.Not(self.query.subquery))
+    def _build_query_string(self, query=None):
+        """
+            Converts Wagtail query operators to their Whoosh equivalents
+        """
+        if not query:
+            query = self.query
+
+        if isinstance(query, str):
+            return query
+        if isinstance(query, PlainText):
+            return force_text(query.query_string)
+        if isinstance(query, Not):
+            return 'NOT {}'.format(self._build_query_string(query.subquery))
+        if isinstance(query, And):
+            print(type(query.subquery))
+            return ' AND '.join([
+                self._build_query_string(subquery)
+                for subquery in query.subqueries
+            ])
+        if isinstance(query, Or):
+            return ' OR '.join([
+                self._build_query_string(subquery)
+                for subquery in query.subqueries
+            ])
 
         raise NotImplementedError(
             '`%s` is not supported by the whoosh search backend.'
             % self.query.__class__.__name__)
 
     def _get_group(self):
-        if isinstance(self.query, wagtail_query.Not):
-            return qparser.OrGroup
+        # Overridable
         return qparser.AndGroup
 
     def get_whoosh_query(self):
         group = self._get_group()
         parser = MultifieldParser(self.field_names, self.schema, group=group)
         parser.add_plugin(FuzzyTermPlugin())
-        return parser.parse(self._build_inner_query())
+        return parser.parse(self._build_query_string())
 
     def _process_lookup(self, field, lookup, value):
         # TODO whooshify
@@ -235,7 +252,6 @@ class WhooshSearchResults(BaseSearchResults):
         query = self.query_compiler.get_whoosh_query()
         index = self.backend.storage.open_index(indexname=model._meta.label)
         with index.searcher() as searcher:
-            print(query)
             results = searcher.search(query, limit=None)
             score_map = dict([(r[PK], r.score) for r in results])
 
@@ -244,7 +260,6 @@ class WhooshSearchResults(BaseSearchResults):
             query_compiler = WhooshSearchQueryCompiler(
                 descendant.objects.none(), self.query_compiler.query)
             query = query_compiler.get_whoosh_query()
-            print(query)
             index = self.backend.storage.open_index(indexname=descendant._meta.label)
             with index.searcher() as searcher:
                 results = searcher.search(query, limit=None)
