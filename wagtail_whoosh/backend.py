@@ -1,11 +1,8 @@
 import os
-import re
 import shutil
-from collections import OrderedDict
 
 from django.db import DEFAULT_DB_ALIAS, models
 from django.db.models import Case, Manager, Q, When
-from django.utils import six
 from django.utils.encoding import force_text
 
 from wagtail.search import query as wagtail_query
@@ -56,6 +53,7 @@ class ModelSchema:
 
 class WhooshIndex:
     # All methods here atm aren't reusable i.e. WhooshIndex(params).method() opens, operates then closes
+    # FIXME (maybe better as a set of functions instead of class?)
     def __init__(self, backend, model, db_alias=None):
         self.backend = backend
         self.models = get_indexed_parents(model)
@@ -194,7 +192,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 
     def _get_group(self):
         if isinstance(self.query, wagtail_query.Not):
-            return qparser.AndNotGroup
+            return qparser.OrGroup
         return qparser.AndGroup
 
     def get_whoosh_query(self):
@@ -237,23 +235,25 @@ class WhooshSearchResults(BaseSearchResults):
         query = self.query_compiler.get_whoosh_query()
         index = self.backend.storage.open_index(indexname=model._meta.label)
         with index.searcher() as searcher:
+            print(query)
             results = searcher.search(query, limit=None)
-            score_map = dict([(r['django_id'], r.score) for r in results])
+            score_map = dict([(r[PK], r.score) for r in results])
 
         descendants = get_descendant_models(model)
         for descendant in descendants:
             query_compiler = WhooshSearchQueryCompiler(
                 descendant.objects.none(), self.query_compiler.query)
             query = query_compiler.get_whoosh_query()
+            print(query)
             index = self.backend.storage.open_index(indexname=descendant._meta.label)
             with index.searcher() as searcher:
                 results = searcher.search(query, limit=None)
-                score_map.update(dict([(r['django_id'], r.score) for r in results]))
+                score_map.update(dict([(r[PK], r.score) for r in results]))
 
         self.backend.storage.close()
 
         django_ids = [r[0] for r in sorted(
-            score_map.items(), key=lambda id_sc: id_sc[1], reverse=True)]
+            score_map.items(), key=lambda pk_score: pk_score[1], reverse=True)]
         if not django_ids:
             return []
         # Retrieve the results from the db, but preserve the order by score
