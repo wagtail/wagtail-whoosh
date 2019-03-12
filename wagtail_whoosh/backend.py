@@ -12,7 +12,7 @@ from wagtail.search.query import And, Not, Or, PlainText
 
 from whoosh import qparser
 from whoosh.fields import ID as WHOOSH_ID
-from whoosh.fields import TEXT, Schema
+from whoosh.fields import NGRAMWORDS, TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
 from whoosh.qparser import FuzzyTermPlugin, MultifieldParser, QueryParser
 from whoosh.writing import AsyncWriter
@@ -35,24 +35,36 @@ class ModelSchema:
         return Schema(**schema_fields)
 
     def _define_search_fields(self):
+        def _to_whoosh_field(field, field_name=None):
+            if isinstance(field, AutocompleteField) or field.partial_match:
+                whoosh_field = NGRAMWORDS(stored=True)
+            else:
+                # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.html
+                whoosh_field = TEXT(
+                    phrase=not field.partial_match, stored=True, field_boost=get_boost(field.boost))
+
+            if not field_name:
+                field_name = field.field_name
+            return field_name, whoosh_field
+
         for field in self.model.get_search_fields():
-            if isinstance(field, SearchField):
-                yield field.field_name, TEXT(
-                    phrase=field.partial_match, stored=True, field_boost=get_boost(field.boost))
-            if isinstance(field, RelatedFields):
-                # TODO
-                pass
             if isinstance(field, FilterField):
                 # TODO
-                pass
-            if isinstance(field, AutocompleteField):
-                # TODO
-                pass
+                continue
+            if isinstance(field, RelatedFields):
+                for subfield in field.fields:
+                    if isinstance(subfield, FilterField):
+                        # TODO
+                        continue
+                    # Redefine field_name to avoid clashes
+                    field_name = '{0}__{1}'.format(field.field_name, subfield.field_name)
+                    yield _to_whoosh_field(subfield, field_name=field_name)
+            else:
+                yield _to_whoosh_field(field)
 
 
 class WhooshIndex:
     # All methods here atm aren't reusable i.e. WhooshIndex(params).method() opens, operates then closes
-    # FIXME (maybe better as a set of functions instead of class?)
     def __init__(self, backend, model, db_alias=None):
         self.backend = backend
         self.models = get_indexed_parents(model)
@@ -93,19 +105,27 @@ class WhooshIndex:
         if isinstance(value, dict):
             return ', '.join(self.prepare_value(item)
                              for item in value.values())
+        if callable(value):
+            return force_text(value())
         return force_text(value)
 
     def _get_document_fields(self, model, item):
         for field in model.get_search_fields():
-            if isinstance(field, SearchField):
+            if isinstance(field, (SearchField, AutocompleteField)):
+                if field.field_name == 'yo':
+                    print(field.get_value(item))
+                    print(type(field.get_value(item)))
                 yield field.field_name, self.prepare_value(field.get_value(item))
             if isinstance(field, RelatedFields):
-                # TODO
-                pass
+                value = field.get_value(item)
+                if isinstance(value, (models.Manager, models.QuerySet)):
+                    qs = value.all()
+                    for sub_field in field.fields:
+                        sub_values = qs.values_list(sub_field.field_name, flat=True)
+                        yield '{0}__{1}'.format(field.field_name, sub_field.field_name), \
+                            self.prepare_value(list(sub_values))
+
             if isinstance(field, FilterField):
-                # TODO
-                pass
-            if isinstance(field, AutocompleteField):
                 # TODO
                 pass
 
@@ -172,12 +192,17 @@ class WhooshIndex:
 class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.field_names = self._get_fields_names()
+        self.field_names = list(self._get_fields_names())
         self.schema = ModelSchema(self.queryset.model).build_schema()
 
     def _get_fields_names(self):
         model = self.queryset.model
-        return [field.field_name for field in model.get_searchable_search_fields()]
+        for field in model.get_search_fields():
+            if isinstance(field, RelatedFields):
+                for sub_field in field.fields:
+                    yield '{0}__{1}'.format(field.field_name, sub_field.field_name)
+            else:
+                yield field.field_name
 
     def _build_query_string(self, query=None):
         """
@@ -193,7 +218,6 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         if isinstance(query, Not):
             return 'NOT {}'.format(self._build_query_string(query.subquery))
         if isinstance(query, And):
-            print(type(query.subquery))
             return ' AND '.join([
                 self._build_query_string(subquery)
                 for subquery in query.subqueries
