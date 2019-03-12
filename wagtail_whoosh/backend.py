@@ -144,25 +144,6 @@ class WhooshIndex:
             writer.commit()
         self._close_indicies()
 
-    # def prepare_field(self, obj, field):
-    #     if isinstance(field, SearchField):
-    #         yield (unidecode(self.prepare_value(field.get_value(obj))),
-    #                get_weight(field.boost))
-    #     elif isinstance(field, RelatedFields):
-    #         sub_obj = field.get_value(obj)
-    #         if sub_obj is None:
-    #             return
-    #         if isinstance(sub_obj, Manager):
-    #             sub_objs = sub_obj.all()
-    #         else:
-    #             if callable(sub_obj):
-    #                 sub_obj = sub_obj()
-    #             sub_objs = [sub_obj]
-    #         for sub_obj in sub_objs:
-    #             for sub_field in field.fields:
-    #                 for value in self.prepare_field(sub_obj, sub_field):
-    #                     yield value
-
     def add_items(self, model, items):
         for add_model in self.models:
             index = self.indicies[add_model._meta.label]
@@ -174,16 +155,11 @@ class WhooshIndex:
         self._close_indicies()
 
     def delete_item(self, obj):
-        # TODO
-        whoosh_id = ''
-
-        try:
-            index = self.backend.index.refresh()
+        for index in self.indicies:
             writer = index.writer()
-            writer.delete_by_query(q=self.backend.parser.parse('%s:"%s"' % ('', '')))
+            writer.delete_by_term(PK, obj.pk)
             writer.commit()
-        except Exception as e:
-            raise e
+        self._close_indicies()
 
     def __str__(self):
         return self.name
