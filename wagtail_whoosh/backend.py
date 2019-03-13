@@ -7,8 +7,8 @@ from django.utils.encoding import force_text
 
 from wagtail.search.backends.base import (
     BaseSearchBackend, BaseSearchQueryCompiler, BaseSearchResults)
-from wagtail.search.index import AutocompleteField, FilterField, RelatedFields, SearchField
-from wagtail.search.query import And, Not, Or, PlainText
+from wagtail.search.index import FilterField, RelatedFields, SearchField
+from wagtail.search.query import And, Not, Or, SearchQueryShortcut, Term
 from wagtail.search.utils import OR
 
 from whoosh import qparser
@@ -18,7 +18,7 @@ from whoosh.filedb.filestore import FileStorage
 from whoosh.qparser import FuzzyTermPlugin, MultifieldParser
 from whoosh.writing import AsyncWriter
 
-from .utils import get_boost, get_descendant_models, get_indexed_parents
+from .utils import get_boost, get_descendant_models, get_indexed_parents, unidecode
 
 PK = "pk"
 
@@ -36,7 +36,7 @@ class ModelSchema:
 
     def _define_search_fields(self):
         def _to_whoosh_field(field, field_name=None):
-            if isinstance(field, AutocompleteField) or field.partial_match:
+            if field.partial_match:
                 whoosh_field = NGRAMWORDS(stored=True)
             else:
                 # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.html
@@ -109,7 +109,7 @@ class WhooshIndex:
 
     def _get_document_fields(self, model, item):
         for field in model.get_search_fields():
-            if isinstance(field, (SearchField, AutocompleteField)):
+            if isinstance(field, SearchField):
                 yield field.field_name, self.prepare_value(field.get_value(item))
             if isinstance(field, RelatedFields):
                 value = field.get_value(item)
@@ -182,27 +182,29 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             else:
                 yield field.field_name
 
-    def _build_query_string(self, query=None):
+    def _build_query_string(self, query=None, config=None):
         """
             Converts Wagtail query operators to their Whoosh equivalents
         """
-        if not query:
+        if query is None:
             query = self.query
 
-        if isinstance(query, str):
-            return query
-        if isinstance(query, PlainText):
-            return force_text(query.query_string)
+        if isinstance(query, SearchQueryShortcut):
+            return self._build_query_string(query.get_equivalent(), config)
+        if isinstance(query, Term):
+            return unidecode(query.term)
         if isinstance(query, Not):
-            return 'NOT {}'.format(self._build_query_string(query.subquery))
+            return ' NOT {}'.format(
+                self._build_query_string(query.subquery, config)
+            )
         if isinstance(query, And):
             return ' AND '.join([
-                self._build_query_string(subquery)
+                self._build_query_string(subquery, config)
                 for subquery in query.subqueries
             ])
         if isinstance(query, Or):
             return ' OR '.join([
-                self._build_query_string(subquery)
+                self._build_query_string(subquery, config)
                 for subquery in query.subqueries
             ])
 

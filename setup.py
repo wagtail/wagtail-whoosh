@@ -30,7 +30,7 @@ setup(
         'Topic :: Internet :: WWW/HTTP :: Dynamic Content',
     ],
     install_requires=[
-        "wagtail~=2.4",
+        "wagtail>=2.0,<=2.1",
         "Whoosh==2.7.4",
     ],
     test_suite='runtests.runtests'

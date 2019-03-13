@@ -4,6 +4,13 @@ from django.apps import apps
 
 from wagtail.search.index import Indexed
 
+try:
+    # Only use the GPLv2 licensed unidecode if it's installed.
+    from unidecode import unidecode
+except ImportError:
+    def unidecode(value):
+        return value
+
 
 @lru_cache()
 def get_indexed_parents(model):
