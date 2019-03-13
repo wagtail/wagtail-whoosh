@@ -21,7 +21,6 @@ from whoosh.writing import AsyncWriter
 from .utils import get_boost, get_descendant_models, get_indexed_parents
 
 PK = "pk"
-DOCUMENT_FIELD = "text"
 
 
 class ModelSchema:
@@ -42,7 +41,7 @@ class ModelSchema:
             else:
                 # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.html
                 whoosh_field = TEXT(
-                    phrase=not field.partial_match, stored=True, field_boost=get_boost(field.boost))
+                    phrase=True, stored=True, field_boost=get_boost(field.boost))
 
             if not field_name:
                 field_name = field.field_name
