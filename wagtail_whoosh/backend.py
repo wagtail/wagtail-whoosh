@@ -2,22 +2,23 @@ import os
 import shutil
 
 from django.db import DEFAULT_DB_ALIAS, models
-from django.db.models import Case, Manager, Q, When
+from django.db.models import Case, Q, When
 from django.utils.encoding import force_text
 
 from wagtail.search.backends.base import (
     BaseSearchBackend, BaseSearchQueryCompiler, BaseSearchResults)
 from wagtail.search.index import AutocompleteField, FilterField, RelatedFields, SearchField
 from wagtail.search.query import And, Not, Or, PlainText
+from wagtail.search.utils import OR
 
 from whoosh import qparser
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import NGRAMWORDS, TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
-from whoosh.qparser import FuzzyTermPlugin, MultifieldParser, QueryParser
+from whoosh.qparser import FuzzyTermPlugin, MultifieldParser
 from whoosh.writing import AsyncWriter
 
-from .utils import get_boost, get_descendant_models, get_indexed_parents, unidecode
+from .utils import get_boost, get_descendant_models, get_indexed_parents
 
 PK = "pk"
 DOCUMENT_FIELD = "text"
@@ -169,6 +170,11 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         self.schema = ModelSchema(self.queryset.model).build_schema()
 
     def _get_fields_names(self):
+        if self.fields:
+            print('fields', self.fields)
+            for f in self.fields:
+                yield f
+            return
         model = self.queryset.model
         for field in model.get_search_fields():
             if isinstance(field, RelatedFields):
@@ -209,10 +215,15 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         # Overridable
         return qparser.AndGroup
 
+    def _get_plugins(self):
+        # Overridable
+        return [FuzzyTermPlugin()]
+
     def get_whoosh_query(self):
         group = self._get_group()
+        print(self.field_names)
         parser = MultifieldParser(self.field_names, self.schema, group=group)
-        parser.add_plugin(FuzzyTermPlugin())
+        [parser.add_plugin(pin) for pin in self._get_plugins()]
         return parser.parse(self._build_query_string())
 
     def _process_lookup(self, field, lookup, value):
@@ -221,41 +232,38 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
                     '__' + lookup: value})
 
     def _connect_filters(self, filters, connector, negated):
-        # TODO
-        # if connector == 'AND':
-        #     q = Q(*filters)
-        # elif connector == 'OR':
-        #     q = OR([Q(fil) for fil in filters])
-        # else:
-        #     return
-        #
-        # if negated:
-        #     q = ~q
-        #
-        # return q
-        pass
+        # TODO whooshify
+        if connector == 'AND':
+            q = Q(*filters)
+        elif connector == 'OR':
+            q = OR([Q(fil) for fil in filters])
+        else:
+            return
 
-    def build_single_term_filter(self, term):
-        term_query = models.Q()
-        for field_name in self.fields_names:
-            term_query |= models.Q(**{field_name + '__icontains': term})
-        return term_query
+        if negated:
+            q = ~q
+
+        return q
 
 
 class WhooshSearchResults(BaseSearchResults):
+    supports_facet = False
+
     def _do_search(self):
         # Probably better way to get the model
-        model = self.query_compiler.queryset.model
-        query = self.query_compiler.get_whoosh_query()
+        qc = self.query_compiler
+        model = qc.queryset.model
+        query = qc.get_whoosh_query()
         index = self.backend.storage.open_index(indexname=model._meta.label)
         with index.searcher() as searcher:
             results = searcher.search(query, limit=None)
             score_map = dict([(r[PK], r.score) for r in results])
 
         descendants = get_descendant_models(model)
+
         for descendant in descendants:
             query_compiler = WhooshSearchQueryCompiler(
-                descendant.objects.none(), self.query_compiler.query)
+                descendant.objects.none(), qc.query, fields=qc.fields)
             query = query_compiler.get_whoosh_query()
             index = self.backend.storage.open_index(indexname=descendant._meta.label)
             with index.searcher() as searcher:
@@ -282,6 +290,10 @@ class WhooshSearchResults(BaseSearchResults):
     def _do_count(self):
         # FIXME https://whoosh.readthedocs.io/en/latest/api/collectors.html#whoosh.collectors.Collector.count
         return len(self._do_search())
+
+    def facet(self, field_name):
+        # TODO (FilterFields first)
+        super().facet(field_name)
 
 
 class WhooshSearchRebuilder:
