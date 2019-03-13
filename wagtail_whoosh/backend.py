@@ -118,7 +118,7 @@ class WhooshIndex:
                         yield '{0}__{1}'.format(field.field_name, sub_field.field_name), \
                             self.prepare_value(list(sub_values))
                 if isinstance(value, models.Model):
-                    for sub_field in value.search_fields:
+                    for sub_field in field.fields:
                         yield '{0}__{1}'.format(field.field_name, sub_field.field_name), \
                             sub_field.get_value(value)
 
@@ -129,7 +129,6 @@ class WhooshIndex:
         }
         document.update(doc_fields)
         return document
-
 
     def add_item(self, item):
         for model in self.models:
