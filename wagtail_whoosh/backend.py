@@ -28,10 +28,11 @@ class ModelSchema:
         self.model = model
 
     def build_schema(self):
+        search_fields = dict(self._define_search_fields())
         schema_fields = {
             PK: WHOOSH_ID(stored=True, unique=True),
-            **dict(self._define_search_fields()),
         }
+        schema_fields.update(search_fields)
         return Schema(**schema_fields)
 
     def _define_search_fields(self):
@@ -122,10 +123,13 @@ class WhooshIndex:
                             sub_field.get_value(value)
 
     def _create_document(self, model, item):
-        return {
-            PK: force_text(item.pk),
-            **dict(self._get_document_fields(model, item))
+        doc_fields = dict(self._get_document_fields(model, item))
+        document = {
+            PK: force_text(item.pk)
         }
+        document.update(doc_fields)
+        return document
+
 
     def add_item(self, item):
         for model in self.models:
