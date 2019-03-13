@@ -36,26 +36,23 @@ class ModelSchema:
 
     def _define_search_fields(self):
         def _to_whoosh_field(field, field_name=None):
-            if field.partial_match:
-                whoosh_field = NGRAMWORDS(stored=True)
+            if isinstance(field, SearchField):
+                if field.partial_match:
+                    whoosh_field = NGRAMWORDS(stored=True)
+                else:
+                    whoosh_field = TEXT(
+                        phrase=True, stored=True, field_boost=get_boost(field.boost))
             else:
-                # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.html
-                whoosh_field = TEXT(
-                    phrase=True, stored=True, field_boost=get_boost(field.boost))
+                # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
+                whoosh_field = TEXT(phrase=True, stored=True)
 
             if not field_name:
                 field_name = field.field_name
             return field_name, whoosh_field
 
         for field in self.model.get_search_fields():
-            if isinstance(field, FilterField):
-                # TODO
-                continue
             if isinstance(field, RelatedFields):
                 for subfield in field.fields:
-                    if isinstance(subfield, FilterField):
-                        # TODO
-                        continue
                     # Redefine field_name to avoid clashes
                     field_name = '{0}__{1}'.format(field.field_name, subfield.field_name)
                     yield _to_whoosh_field(subfield, field_name=field_name)
@@ -109,7 +106,7 @@ class WhooshIndex:
 
     def _get_document_fields(self, model, item):
         for field in model.get_search_fields():
-            if isinstance(field, SearchField):
+            if isinstance(field, (SearchField, FilterField)):
                 yield field.field_name, self.prepare_value(field.get_value(item))
             if isinstance(field, RelatedFields):
                 value = field.get_value(item)
@@ -120,9 +117,6 @@ class WhooshIndex:
                         yield '{0}__{1}'.format(field.field_name, sub_field.field_name), \
                             self.prepare_value(list(sub_values))
 
-            if isinstance(field, FilterField):
-                # TODO
-                pass
 
     def _create_document(self, model, item):
         return {
@@ -293,7 +287,7 @@ class WhooshSearchResults(BaseSearchResults):
         return len(self._do_search())
 
     def facet(self, field_name):
-        # TODO (FilterFields first)
+        # TODO
         super().facet(field_name)
 
 
