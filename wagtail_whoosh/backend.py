@@ -166,12 +166,12 @@ class WhooshIndex:
 class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.operator = kwargs.get('operator', None)
         self.field_names = list(self._get_fields_names())
         self.schema = ModelSchema(self.queryset.model).build_schema()
 
     def _get_fields_names(self):
         if self.fields:
-            print('fields', self.fields)
             for f in self.fields:
                 yield f
             return
@@ -212,8 +212,9 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             % self.query.__class__.__name__)
 
     def _get_group(self):
-        # Overridable
-        return qparser.AndGroup
+        if self.operator and self.operator == 'and':
+            return qparser.AndGroup
+        return qparser.OrGroup
 
     def _get_plugins(self):
         # Overridable
@@ -221,7 +222,6 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 
     def get_whoosh_query(self):
         group = self._get_group()
-        print(self.field_names)
         parser = MultifieldParser(self.field_names, self.schema, group=group)
         [parser.add_plugin(pin) for pin in self._get_plugins()]
         return parser.parse(self._build_query_string())
@@ -263,7 +263,7 @@ class WhooshSearchResults(BaseSearchResults):
 
         for descendant in descendants:
             query_compiler = WhooshSearchQueryCompiler(
-                descendant.objects.none(), qc.query, fields=qc.fields)
+                descendant.objects.none(), qc.query, fields=qc.fields, operator=qc.operator)
             query = query_compiler.get_whoosh_query()
             index = self.backend.storage.open_index(indexname=descendant._meta.label)
             with index.searcher() as searcher:
