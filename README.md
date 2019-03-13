@@ -16,7 +16,7 @@ ROOT_DIR = os.path.abspath(os.path.dirname(__name__))
 WAGTAILSEARCH_BACKENDS = {
     'default': {
         'BACKEND': 'wagtail_whoosh.backend',
-        'PATH': os.path.join(PROJECT_ROOT, 'search_index')
+        'PATH': os.path.join(ROOT_DIR, 'search_index')
     },
 }
 ```
