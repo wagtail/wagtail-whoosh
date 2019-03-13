@@ -8,7 +8,7 @@ from django.utils.encoding import force_text
 from wagtail.search.backends.base import (
     BaseSearchBackend, BaseSearchQueryCompiler, BaseSearchResults)
 from wagtail.search.index import FilterField, RelatedFields, SearchField
-from wagtail.search.query import And, Not, Or, SearchQueryShortcut, Term
+from wagtail.search.query import And, MatchAll, Not, Or, SearchQueryShortcut, Term
 from wagtail.search.utils import OR
 
 from whoosh import qparser
@@ -116,7 +116,10 @@ class WhooshIndex:
                         sub_values = qs.values_list(sub_field.field_name, flat=True)
                         yield '{0}__{1}'.format(field.field_name, sub_field.field_name), \
                             self.prepare_value(list(sub_values))
-
+                if isinstance(value, models.Model):
+                    for sub_field in value.search_fields:
+                        yield '{0}__{1}'.format(field.field_name, sub_field.field_name), \
+                            sub_field.get_value(value)
 
     def _create_document(self, model, item):
         return {
@@ -147,7 +150,7 @@ class WhooshIndex:
         for model in self.models:
             index = self.indicies[model._meta.label]
             writer = index.writer()
-            writer.delete_by_term(PK, obj.pk)
+            writer.delete_by_term(PK, str(obj.pk))
             writer.commit()
             index.optimize()
         self._close_indicies()
@@ -183,6 +186,8 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         if query is None:
             query = self.query
 
+        if isinstance(query, MatchAll):
+            return '*'
         if isinstance(query, SearchQueryShortcut):
             return self._build_query_string(query.get_equivalent(), config)
         if isinstance(query, Term):
@@ -271,9 +276,13 @@ class WhooshSearchResults(BaseSearchResults):
             score_map.items(), key=lambda pk_score: pk_score[1], reverse=True)]
         if not django_ids:
             return []
-        # Retrieve the results from the db, but preserve the order by score
-        preserved_order = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(django_ids)])
-        results = model.objects.filter(pk__in=django_ids).order_by(preserved_order)
+
+        if qc.order_by_relevance:
+            # Retrieve the results from the db, but preserve the order by score
+            preserved_order = Case(*[When(pk=pk, then=pos) for pos, pk in enumerate(django_ids)])
+            results = qc.queryset.filter(pk__in=django_ids).order_by(preserved_order)
+        else:
+            results = qc.queryset.filter(pk__in=django_ids)
         results = results.distinct()[self.start:self.stop]
 
         # Add score annotations if required
