@@ -231,7 +231,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             '`%s` is not supported by the whoosh search backend.'
             % self.query.__class__.__name__)
 
-    def search(self, backend, start, stop, score_field):
+    def search(self, backend, start, stop, score_field=None):
         # TODO: Handle MatchAll nested inside other search query classes.
         if isinstance(self.query, MatchAll):
             return self.queryset[start:stop]
@@ -340,11 +340,11 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 class WhooshSearchResults(BaseSearchResults):
     def _do_search(self):
         return list(self.query_compiler.search(
-            self.backend, self.start, self.stop, self._score_field))
+            self.backend, self.start, self.stop, score_field=self._score_field))
 
     def _do_count(self):
         return self.query_compiler.search(
-            self.backend, None, None, None).count()
+            self.backend, None, None, score_field=self._score_field).count()
 
 
 class WhooshSearchRebuilder:
