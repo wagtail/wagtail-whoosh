@@ -5,10 +5,12 @@ from django.db import DEFAULT_DB_ALIAS, models
 from django.db.models import Case, Q, When
 from django.utils.encoding import force_text
 
-from wagtail.search.backends.base import (
-    BaseSearchBackend, BaseSearchQueryCompiler, BaseSearchResults)
-from wagtail.search.index import FilterField, RelatedFields, SearchField
-from wagtail.search.query import And, MatchAll, Not, Or, SearchQueryShortcut, Term
+from wagtail.search.backends.base import (BaseSearchBackend,
+                                          BaseSearchQueryCompiler,
+                                          BaseSearchResults)
+from wagtail.search.index import (AutocompleteField, FilterField,
+                                  RelatedFields, SearchField)
+from wagtail.search.query import And, Boost, MatchAll, Not, Or, PlainText
 from wagtail.search.utils import OR
 
 from whoosh import qparser
@@ -18,7 +20,8 @@ from whoosh.filedb.filestore import FileStorage
 from whoosh.qparser import FuzzyTermPlugin, MultifieldParser
 from whoosh.writing import AsyncWriter
 
-from .utils import get_boost, get_descendant_models, get_indexed_parents, unidecode
+from .utils import (get_boost, get_descendant_models, get_indexed_parents,
+                    unidecode)
 
 PK = "pk"
 
@@ -37,6 +40,8 @@ class ModelSchema:
 
     def _define_search_fields(self):
         def _to_whoosh_field(field, field_name=None):
+            if isinstance(field, AutocompleteField):
+                whoosh_field = NGRAMWORDS(stored=True)
             if isinstance(field, SearchField):
                 if field.partial_match:
                     whoosh_field = NGRAMWORDS(stored=True)
@@ -94,6 +99,8 @@ class WhooshIndex:
             index.refresh()
 
     def prepare_value(self, value):
+        if not value:
+            return ''
         if isinstance(value, str):
             return value
         if isinstance(value, list):
@@ -107,7 +114,7 @@ class WhooshIndex:
 
     def _get_document_fields(self, model, item):
         for field in model.get_search_fields():
-            if isinstance(field, (SearchField, FilterField)):
+            if isinstance(field, (SearchField, FilterField, AutocompleteField)):
                 yield field.field_name, self.prepare_value(field.get_value(item))
             if isinstance(field, RelatedFields):
                 value = field.get_value(item)
@@ -120,7 +127,7 @@ class WhooshIndex:
                 if isinstance(value, models.Model):
                     for sub_field in field.fields:
                         yield '{0}__{1}'.format(field.field_name, sub_field.field_name), \
-                            sub_field.get_value(value)
+                            self.prepare_value(sub_field.get_value(value))
 
     def _create_document(self, model, item):
         doc_fields = dict(self._get_document_fields(model, item))
@@ -182,7 +189,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             else:
                 yield field.field_name
 
-    def _build_query_string(self, query=None, config=None):
+    def _build_query_string(self, query=None):
         """
             Converts Wagtail query operators to their Whoosh equivalents
         """
@@ -191,22 +198,24 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 
         if isinstance(query, MatchAll):
             return '*'
-        if isinstance(query, SearchQueryShortcut):
-            return self._build_query_string(query.get_equivalent(), config)
-        if isinstance(query, Term):
-            return unidecode(query.term)
+        if isinstance(query, PlainText):
+            return unidecode(query.query_string)
+        if isinstance(query, Boost):
+            # https://whoosh.readthedocs.io/en/latest/querylang.html#boosting-query-elements
+            return '({0})^{1}'.format(
+                self._build_query_string(query.subquery), query.boost)
         if isinstance(query, Not):
             return ' NOT {}'.format(
-                self._build_query_string(query.subquery, config)
+                self._build_query_string(query.subquery)
             )
         if isinstance(query, And):
             return ' AND '.join([
-                self._build_query_string(subquery, config)
+                self._build_query_string(subquery)
                 for subquery in query.subqueries
             ])
         if isinstance(query, Or):
             return ' OR '.join([
-                self._build_query_string(subquery, config)
+                self._build_query_string(subquery)
                 for subquery in query.subqueries
             ])
 
@@ -263,7 +272,6 @@ class WhooshSearchResults(BaseSearchResults):
             score_map = dict([(r[PK], r.score) for r in results])
 
         descendants = get_descendant_models(model)
-
         for descendant in descendants:
             query_compiler = WhooshSearchQueryCompiler(
                 descendant.objects.none(), qc.query, fields=qc.fields, operator=qc.operator)
@@ -271,7 +279,11 @@ class WhooshSearchResults(BaseSearchResults):
             index = self.backend.storage.open_index(indexname=descendant._meta.label)
             with index.searcher() as searcher:
                 results = searcher.search(query, limit=None)
-                score_map.update(dict([(r[PK], r.score) for r in results]))
+                for result in results:
+                    pk = result[PK]
+                    # Add to the score map, or update if higher value
+                    if pk not in score_map or score_map[pk] < result.score:
+                        score_map[pk] = result.score
 
         self.backend.storage.close()
 
@@ -324,6 +336,7 @@ class WhooshSearchRebuilder:
 
 class WhooshSearchBackend(BaseSearchBackend):
     query_compiler_class = WhooshSearchQueryCompiler
+    autocomplete_query_compiler_class = WhooshSearchQueryCompiler
     results_class = WhooshSearchResults
     rebuilder_class = WhooshSearchRebuilder
 
