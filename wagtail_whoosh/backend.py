@@ -24,6 +24,16 @@ from .utils import (get_boost, get_descendant_models, get_indexed_parents,
                     unidecode)
 
 PK = "pk"
+AUTOCOMPLETE_SUFFIX = '_ngrams'
+FILTER_SUFFIX = '_filter'
+
+
+def _get_field_mapping(field):
+    if isinstance(field, FilterField):
+        return field.field_name + FILTER_SUFFIX
+    elif isinstance(field, AutocompleteField):
+        return field.field_name + AUTOCOMPLETE_SUFFIX
+    return field.field_name
 
 
 class ModelSchema:
@@ -40,27 +50,22 @@ class ModelSchema:
 
     def _define_search_fields(self):
         def _to_whoosh_field(field, field_name=None):
-            if isinstance(field, AutocompleteField):
-                whoosh_field = NGRAMWORDS(stored=True)
-            if isinstance(field, SearchField):
-                if field.partial_match:
-                    whoosh_field = NGRAMWORDS(stored=True)
-                else:
-                    whoosh_field = TEXT(
-                        phrase=True, stored=True, field_boost=get_boost(field.boost))
+            if isinstance(field, AutocompleteField) or \
+                    (hasattr(field, 'partial_match') and field.partial_match):
+                whoosh_field = NGRAMWORDS(stored=True, minsize=2, maxsize=8, queryor=True)
             else:
                 # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
                 whoosh_field = TEXT(phrase=True, stored=True)
 
             if not field_name:
-                field_name = field.field_name
+                field_name = _get_field_mapping(field)
             return field_name, whoosh_field
 
         for field in self.model.get_search_fields():
             if isinstance(field, RelatedFields):
                 for subfield in field.fields:
                     # Redefine field_name to avoid clashes
-                    field_name = '{0}__{1}'.format(field.field_name, subfield.field_name)
+                    field_name = '{0}__{1}'.format(field.field_name, _get_field_mapping(subfield))
                     yield _to_whoosh_field(subfield, field_name=field_name)
             else:
                 yield _to_whoosh_field(field)
@@ -115,18 +120,18 @@ class WhooshIndex:
     def _get_document_fields(self, model, item):
         for field in model.get_search_fields():
             if isinstance(field, (SearchField, FilterField, AutocompleteField)):
-                yield field.field_name, self.prepare_value(field.get_value(item))
+                yield _get_field_mapping(field), self.prepare_value(field.get_value(item))
             if isinstance(field, RelatedFields):
                 value = field.get_value(item)
                 if isinstance(value, (models.Manager, models.QuerySet)):
                     qs = value.all()
                     for sub_field in field.fields:
                         sub_values = qs.values_list(sub_field.field_name, flat=True)
-                        yield '{0}__{1}'.format(field.field_name, sub_field.field_name), \
+                        yield '{0}__{1}'.format(field.field_name, _get_field_mapping(sub_field)), \
                             self.prepare_value(list(sub_values))
                 if isinstance(value, models.Model):
                     for sub_field in field.fields:
-                        yield '{0}__{1}'.format(field.field_name, sub_field.field_name), \
+                        yield '{0}__{1}'.format(field.field_name, _get_field_mapping(sub_field)),\
                             self.prepare_value(sub_field.get_value(value))
 
     def _create_document(self, model, item):
@@ -185,9 +190,9 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         for field in model.get_search_fields():
             if isinstance(field, RelatedFields):
                 for sub_field in field.fields:
-                    yield '{0}__{1}'.format(field.field_name, sub_field.field_name)
+                    yield '{0}__{1}'.format(field.field_name, _get_field_mapping(field))
             else:
-                yield field.field_name
+                yield _get_field_mapping(field)
 
     def _build_query_string(self, query=None):
         """
@@ -258,8 +263,28 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         return q
 
 
+class WhooshAutocompleteQueryCompiler(WhooshSearchQueryCompiler):
+    def _get_fields_names(self):
+        model = self.queryset.model
+        for field in model.get_autocomplete_search_fields():
+            yield _get_field_mapping(field)
+
+
 class WhooshSearchResults(BaseSearchResults):
     supports_facet = False
+
+    def _new_query_compiler(self, model):
+        if isinstance(self.query_compiler, WhooshAutocompleteQueryCompiler):
+            return WhooshAutocompleteQueryCompiler(
+                model.objects.none(),
+                self.query_compiler.query,
+                fields=self.query_compiler.fields,
+                operator=self.query_compiler.operator)
+        return WhooshSearchQueryCompiler(
+            model.objects.none(),
+            self.query_compiler.query,
+            fields=self.query_compiler.fields,
+            operator=self.query_compiler.operator)
 
     def _do_search(self):
         # Probably better way to get the model
@@ -273,8 +298,7 @@ class WhooshSearchResults(BaseSearchResults):
 
         descendants = get_descendant_models(model)
         for descendant in descendants:
-            query_compiler = WhooshSearchQueryCompiler(
-                descendant.objects.none(), qc.query, fields=qc.fields, operator=qc.operator)
+            query_compiler = self._new_query_compiler(descendant)
             query = query_compiler.get_whoosh_query()
             index = self.backend.storage.open_index(indexname=descendant._meta.label)
             with index.searcher() as searcher:
@@ -336,7 +360,7 @@ class WhooshSearchRebuilder:
 
 class WhooshSearchBackend(BaseSearchBackend):
     query_compiler_class = WhooshSearchQueryCompiler
-    autocomplete_query_compiler_class = WhooshSearchQueryCompiler
+    autocomplete_query_compiler_class = WhooshAutocompleteQueryCompiler
     results_class = WhooshSearchResults
     rebuilder_class = WhooshSearchRebuilder
 
