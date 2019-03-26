@@ -210,7 +210,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             return '({0})^{1}'.format(
                 self._build_query_string(query.subquery), query.boost)
         if isinstance(query, Not):
-            return ' NOT {}'.format(
+            return ' NOT ({})'.format(
                 self._build_query_string(query.subquery)
             )
         if isinstance(query, And):

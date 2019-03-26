@@ -3,7 +3,7 @@ from __future__ import unicode_literals
 
 from django.test import TestCase
 
-from wagtail.search.query import Boost, PlainText
+from wagtail.search.query import Boost, Not, PlainText
 from wagtail.search.tests.test_backends import BackendTests
 from wagtail.tests.search import models
 
@@ -39,3 +39,32 @@ class TestWhooshSearchBackend(BackendTests, TestCase):
             "JavaScript: The Definitive Guide",
             "Learning Python",
         ])
+
+    def test_not(self):
+        # Overridden, the default operator for Whoosh is Or, so the last test needs the operator sent through
+        all_other_titles = {
+            'A Clash of Kings',
+            'A Game of Thrones',
+            'A Storm of Swords',
+            'Foundation',
+            'Learning Python',
+            'The Hobbit',
+            'The Two Towers',
+            'The Fellowship of the Ring',
+            'The Return of the King',
+            'The Rust Programming Language',
+            'Two Scoops of Django 1.11',
+        }
+        results = self.backend.search(Not(PlainText('javascript')),
+                                      models.Book.objects.all())
+        self.assertSetEqual({r.title for r in results}, all_other_titles)
+
+        results = self.backend.search(~PlainText('javascript'),
+                                      models.Book.objects.all())
+        self.assertSetEqual({r.title for r in results}, all_other_titles)
+
+        # Tests multiple words
+        results = self.backend.search(~PlainText('javascript the'),
+                                      models.Book.objects.all(), operator='and')
+
+        self.assertSetEqual({r.title for r in results}, all_other_titles)
