@@ -34,8 +34,8 @@ def get_descendant_models(model):
     return descendant_models
 
 
-def get_boost(value):
-    if value:
+def get_boost(field):
+    if hasattr(field, 'bost'):
         # FIXME might be a value between 0.0->1.0, docs unclear
-        return float(value)
+        return float(field.boost)
     return 1.0

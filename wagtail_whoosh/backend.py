@@ -50,12 +50,12 @@ class ModelSchema:
 
     def _define_search_fields(self):
         def _to_whoosh_field(field, field_name=None):
-            if isinstance(field, AutocompleteField) or \
-                    (hasattr(field, 'partial_match') and field.partial_match):
+            if isinstance(field, AutocompleteField):
                 whoosh_field = NGRAMWORDS(stored=True, minsize=2, maxsize=8, queryor=True)
             else:
                 # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
-                whoosh_field = TEXT(phrase=True, stored=True)
+                phrase = hasattr(field, 'partial_match') and field.partial_match
+                whoosh_field = TEXT(phrase=phrase, stored=True, field_boost=get_boost(field))
 
             if not field_name:
                 field_name = _get_field_mapping(field)
@@ -188,6 +188,8 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             return
         model = self.queryset.model
         for field in model.get_search_fields():
+            if isinstance(field, AutocompleteField):
+                continue
             if isinstance(field, RelatedFields):
                 for sub_field in field.fields:
                     yield '{0}__{1}'.format(field.field_name, _get_field_mapping(sub_field))
@@ -231,6 +233,9 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
     def _get_group(self):
         if self.operator and self.operator == 'and':
             return qparser.AndGroup
+        elif isinstance(self.query, PlainText):
+            if self.query.operator == 'and':
+                return qparser.AndGroup
         return qparser.OrGroup
 
     def _get_plugins(self):
@@ -295,7 +300,6 @@ class WhooshSearchResults(BaseSearchResults):
         with index.searcher() as searcher:
             results = searcher.search(query, limit=None)
             score_map = dict([(r[PK], r.score) for r in results])
-
         descendants = get_descendant_models(model)
         for descendant in descendants:
             query_compiler = self._new_query_compiler(descendant)
