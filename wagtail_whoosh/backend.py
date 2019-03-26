@@ -190,7 +190,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         for field in model.get_search_fields():
             if isinstance(field, RelatedFields):
                 for sub_field in field.fields:
-                    yield '{0}__{1}'.format(field.field_name, _get_field_mapping(field))
+                    yield '{0}__{1}'.format(field.field_name, _get_field_mapping(sub_field))
             else:
                 yield _get_field_mapping(field)
 
