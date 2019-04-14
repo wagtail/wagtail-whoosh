@@ -23,13 +23,14 @@ setup(
         'License :: OSI Approved :: BSD License',  # example license
         'Operating System :: OS Independent',
         'Programming Language :: Python',
+        'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Topic :: Internet :: WWW/HTTP',
         'Topic :: Internet :: WWW/HTTP :: Dynamic Content',
     ],
     install_requires=[
-        "wagtail>=2.0,<=2.1",
+        "wagtail>=2.2,<=2.5",
         "Whoosh==2.7.4",
     ],
     test_suite='runtests.runtests'

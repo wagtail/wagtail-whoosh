@@ -14,8 +14,7 @@ from wagtail.search.backends.base import (BaseSearchBackend,
                                           BaseSearchQueryCompiler,
                                           BaseSearchResults)
 from wagtail.search.index import RelatedFields, SearchField
-from wagtail.search.query import (And, MatchAll, Not, Or, SearchQueryShortcut,
-                                  Term)
+from wagtail.search.query import And, Boost, MatchAll, Not, Or, PlainText
 from wagtail.search.utils import AND, OR
 
 from whoosh import query as wquery
@@ -32,13 +31,6 @@ DJANGO_CT = "django_ct"
 DJANGO_ID = "django_id"
 DOCUMENT_FIELD = "text"
 IDENTIFIER_REGEX = re.compile("^[\w\d_]+\.[\w\d_]+\.[\w\d-]+$")
-
-
-def get_facet_field_name(fieldname):
-    if fieldname in [ID, DJANGO_ID, DJANGO_CT]:
-        return fieldname
-
-    return "%s_exact" % fieldname
 
 
 def get_identifier(obj_or_string):
@@ -186,8 +178,6 @@ class Index:
 
 
 class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
-    DEFAULT_OPERATOR = 'and'
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields_names = list(self.get_fields_names())
@@ -205,14 +195,22 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             else:
                 yield field_name
 
+    def prepare_word(self, word):
+        return unidecode(word)
+
     def build_whoosh_query(self, query=None, config=None):
         if query is None:
             query = self.query
 
-        if isinstance(query, SearchQueryShortcut):
-            return self.build_whoosh_query(query.get_equivalent(), config)
-        if isinstance(query, Term):
-            return unidecode(query.term)
+        if isinstance(query, PlainText):
+            query_params = []
+            for word in query.query_string.split():
+                query_params.append(self.prepare_word(word))
+            operator = " %s " % query.operator.upper()
+            return operator.join(query_params)
+        if isinstance(query, Boost):
+            # TODO: not support boost
+            return self.build_whoosh_query(query.subquery, config)
         if isinstance(query, Not):
             return ' NOT {}'.format(
                 self.build_whoosh_query(query.subquery, config)
@@ -300,30 +298,51 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             term_query |= models.Q(**{field_name + '__icontains': term})
         return term_query
 
-    def build_database_filter(self, query=None):
+    #####################################################################################
+    # this part is copied from wagtail/search/backends/db.py to make it work with filter
+    #####################################################################################
+
+    OPERATORS = {
+        'and': AND,
+        'or': OR,
+    }
+
+    def check_boost(self, query, boost=1.0):
+        if query.boost * boost != 1.0:
+            warn('Database search backend does not support term boosting.')
+
+    def build_database_filter(self, query=None, boost=1.0):
         if query is None:
             query = self.query
+
+        if isinstance(query, PlainText):
+            self.check_boost(query, boost=boost)
+
+            operator = self.OPERATORS[query.operator]
+
+            return operator([
+                self.build_single_term_filter(term)
+                for term in query.query_string.split()
+            ])
+
+        if isinstance(query, Boost):
+            boost *= query.boost
+            return self.build_database_filter(query.subquery, boost=boost)
 
         if isinstance(self.query, MatchAll):
             return models.Q()
 
-        if isinstance(query, SearchQueryShortcut):
-            return self.build_database_filter(query.get_equivalent())
-        if isinstance(query, Term):
-            if query.boost != 1:
-                warn('Database search backend does not support term boosting.')
-            return self.build_single_term_filter(query.term)
         if isinstance(query, Not):
-            return ~self.build_database_filter(query.subquery)
+            return ~self.build_database_filter(query.subquery, boost=boost)
         if isinstance(query, And):
-            return AND(self.build_database_filter(subquery)
+            return AND(self.build_database_filter(subquery, boost=boost)
                        for subquery in query.subqueries)
         if isinstance(query, Or):
-            return OR(self.build_database_filter(subquery)
+            return OR(self.build_database_filter(subquery, boost=boost)
                       for subquery in query.subqueries)
         raise NotImplementedError(
             '`%s` is not supported by the database search backend.'
-            % self.query.__class__.__name__)
+            % query.__class__.__name__)
 
 
 class WhooshSearchResults(BaseSearchResults):
