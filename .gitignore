@@ -11,3 +11,4 @@
 /.eggs/
 /htmlcov/
 venv/
+.python-version
