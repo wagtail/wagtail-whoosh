@@ -4,29 +4,29 @@ dist: trusty
 
 matrix:
   include:
-   - env: TOXENV=dj111-wagtail20-py34
+   - env: TOXENV=dj20-wagtail22-py34
      python: 3.4
-   - env: TOXENV=dj111-wagtail20-py35
+   - env: TOXENV=dj20-wagtail22-py35
      python: 3.5
-   - env: TOXENV=dj111-wagtail20-py36
+   - env: TOXENV=dj20-wagtail22-py36
      python: 3.6
-   - env: TOXENV=dj111-wagtail21-py34
+   - env: TOXENV=dj20-wagtail23-py34
      python: 3.4
-   - env: TOXENV=dj111-wagtail21-py35
+   - env: TOXENV=dj20-wagtail23-py35
      python: 3.5
-   - env: TOXENV=dj111-wagtail21-py36
+   - env: TOXENV=dj20-wagtail23-py36
      python: 3.6
-   - env: TOXENV=dj20-wagtail20-py34
+   - env: TOXENV=dj20-wagtail24-py34
      python: 3.4
-   - env: TOXENV=dj20-wagtail20-py35
+   - env: TOXENV=dj20-wagtail24-py35
      python: 3.5
-   - env: TOXENV=dj20-wagtail20-py36
+   - env: TOXENV=dj20-wagtail24-py36
      python: 3.6
-   - env: TOXENV=dj20-wagtail21-py34
+   - env: TOXENV=dj20-wagtail25-py34
      python: 3.4
-   - env: TOXENV=dj20-wagtail21-py35
+   - env: TOXENV=dj20-wagtail25-py35
      python: 3.5
-   - env: TOXENV=dj20-wagtail21-py36
+   - env: TOXENV=dj20-wagtail25-py36
      python: 3.6
 
 install:
