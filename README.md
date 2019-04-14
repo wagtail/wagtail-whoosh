@@ -4,6 +4,9 @@
 
 ## How to use
 
+* `0.1.x` work with `wagtail>=2.0,<2.2`
+* `0.2.x` work with `wagtail>=2.2`
+
 `pip install wagtail-whoosh`
 
 After installing this package, add `wagtail_whoosh` to INSTALLED_APPS. And then config `WAGTAILSEARCH_BACKENDS`
