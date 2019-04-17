@@ -1,5 +1,6 @@
 import os
 import shutil
+from warnings import warn
 
 from django.db import DEFAULT_DB_ALIAS, models
 from django.db.models import Case, Q, When
@@ -11,7 +12,7 @@ from wagtail.search.backends.base import (BaseSearchBackend,
 from wagtail.search.index import (AutocompleteField, FilterField,
                                   RelatedFields, SearchField)
 from wagtail.search.query import And, Boost, MatchAll, Not, Or, PlainText
-from wagtail.search.utils import OR
+from wagtail.search.utils import AND, OR
 
 from whoosh import qparser
 from whoosh.fields import ID as WHOOSH_ID
@@ -196,6 +197,9 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             else:
                 yield _get_field_mapping(field)
 
+    def prepare_word(self, word):
+        return unidecode(word)
+
     def _build_query_string(self, query=None):
         """
             Converts Wagtail query operators to their Whoosh equivalents
@@ -206,7 +210,11 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
         if isinstance(query, MatchAll):
             return '*'
         if isinstance(query, PlainText):
-            return unidecode(query.query_string)
+            query_params = []
+            for word in query.query_string.split():
+                query_params.append(self.prepare_word(word))
+            operator = " %s " % query.operator.upper()
+            return operator.join(query_params)
         if isinstance(query, Boost):
             # https://whoosh.readthedocs.io/en/latest/querylang.html#boosting-query-elements
             return '({0})^{1}'.format(
@@ -266,6 +274,58 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             q = ~q
 
         return q
+
+    def build_single_term_filter(self, term):
+        term_query = models.Q()
+        for field_name in self.fields_names:
+            term_query |= models.Q(**{field_name + '__icontains': term})
+        return term_query
+
+    #####################################################################################
+    # this part is copied from wagtail/search/backends/db.py to make it work with filter
+    #####################################################################################
+
+    OPERATORS = {
+        'and': AND,
+        'or': OR,
+    }
+
+    def check_boost(self, query, boost=1.0):
+        if query.boost * boost != 1.0:
+            warn('Database search backend does not support term boosting.')
+
+    def build_database_filter(self, query=None, boost=1.0):
+        if query is None:
+            query = self.query
+
+        if isinstance(query, PlainText):
+            self.check_boost(query, boost=boost)
+
+            operator = self.OPERATORS[query.operator]
+
+            return operator([
+                self.build_single_term_filter(term)
+                for term in query.query_string.split()
+            ])
+
+        if isinstance(query, Boost):
+            boost *= query.boost
+            return self.build_database_filter(query.subquery, boost=boost)
+
+        if isinstance(self.query, MatchAll):
+            return models.Q()
+
+        if isinstance(query, Not):
+            return ~self.build_database_filter(query.subquery, boost=boost)
+        if isinstance(query, And):
+            return AND(self.build_database_filter(subquery, boost=boost)
+                       for subquery in query.subqueries)
+        if isinstance(query, Or):
+            return OR(self.build_database_filter(subquery, boost=boost)
+                      for subquery in query.subqueries)
+        raise NotImplementedError(
+            '`%s` is not supported by the database search backend.'
+            % query.__class__.__name__)
 
 
 class WhooshAutocompleteQueryCompiler(WhooshSearchQueryCompiler):

@@ -11,7 +11,6 @@ from wagtail.tests.search import models
 class TestWhooshSearchBackend(BackendTests, TestCase):
     backend_path = 'wagtail_whoosh.backend'
 
-    # Facet searching not supported yet
     def test_facet(self):
         pass
 
