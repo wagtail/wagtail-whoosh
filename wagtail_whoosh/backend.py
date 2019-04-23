@@ -51,12 +51,11 @@ class ModelSchema:
 
     def _define_search_fields(self):
         def _to_whoosh_field(field, field_name=None):
-            if isinstance(field, AutocompleteField):
+            if isinstance(field, AutocompleteField) or (hasattr(field, 'partial_match') and field.partial_match):
                 whoosh_field = NGRAMWORDS(stored=True, minsize=2, maxsize=8, queryor=True)
             else:
                 # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
-                phrase = hasattr(field, 'partial_match') and field.partial_match
-                whoosh_field = TEXT(phrase=phrase, stored=True, field_boost=get_boost(field))
+                whoosh_field = TEXT(phrase=True, stored=True, field_boost=get_boost(field))
 
             if not field_name:
                 field_name = _get_field_mapping(field)
