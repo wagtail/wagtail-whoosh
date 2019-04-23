@@ -24,33 +24,7 @@ WAGTAILSEARCH_BACKENDS = {
 }
 ```
 
-Set `./manage.py update_index` as cron job, or setup hooks that index or delete items on publish / delete.
-
-e.g.
-
-```python
-from wagtail.core import hooks
-from wagtail.search.backends import get_search_backend
-
-@hooks.register('after_create_page')
-def index_page(request, page):
-    backend = get_search_backend()
-    backend.add(page)
-
-
-@hooks.register('after_delete_page')
-def deindex_page(request, page):
-    backend = get_search_backend()
-    backend.delete(page)
-
-@hooks.register('after_edit_page')
-def index_page(request, page):
-    backend = get_search_backend()
-    backend.delete(page)
-    backend.add(page)
-```
-
-
+Set `./manage.py update_index` as cron job
 
 ## Features
 
