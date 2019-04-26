@@ -9,7 +9,6 @@ from django.db.models import Case, Manager, Q, When
 from django.utils import six
 from django.utils.encoding import force_text
 
-from wagtail.search import index
 from wagtail.search.backends.base import (BaseSearchBackend,
                                           BaseSearchQueryCompiler,
                                           BaseSearchResults)
@@ -21,6 +20,7 @@ from whoosh import query as wquery
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
+from whoosh.index import EmptyIndexError
 from whoosh.qparser import FuzzyTermPlugin, QueryParser
 from whoosh.writing import AsyncWriter
 
@@ -415,7 +415,7 @@ class WhooshSearchBackend(BaseSearchBackend):
         else:
             try:
                 self.index = self.storage.open_index(schema=self.schema)
-            except index.EmptyIndexError:
+            except EmptyIndexError:
                 self.index = self.storage.create_index(self.schema)
 
         self.setup_complete = True
