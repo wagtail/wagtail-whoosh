@@ -4,10 +4,13 @@ import shutil
 from collections import OrderedDict
 from warnings import warn
 
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.db import DEFAULT_DB_ALIAS, models
 from django.db.models import Case, Manager, Q, When
 from django.utils import six
 from django.utils.encoding import force_text
+from django.utils.module_loading import import_string
 
 from wagtail.search.backends.base import (BaseSearchBackend,
                                           BaseSearchQueryCompiler,
@@ -17,6 +20,7 @@ from wagtail.search.query import And, Boost, MatchAll, Not, Or, PlainText
 from wagtail.search.utils import AND, OR
 
 from whoosh import query as wquery
+from whoosh.analysis import analyzers
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
@@ -380,6 +384,22 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.use_file_storage = True
         self.post_limit = params.get("POST_LIMIT", 128 * 1024 * 1024)
         self.path = params.get("PATH")
+        self.analyzer = params.get('ANALYZER') or None
+        if self.analyzer:
+            if isinstance(self.analyzer, str):
+                try:
+                    self.analyzer = import_string(self.analyzer)
+                except ImportError:
+                    raise ImproperlyConfigured(
+                        'Wagtail Whoosh Backend: Analyzer %s could not be loaded' %
+                        self.analyzer,
+                    )
+            elif not isinstance(self.analyzer, analyzers.Analyzer):
+                raise ImproperlyConfigured(
+                        'Wagtail Whoosh Backend analyzer: Expected string or subclass of '
+                        '"whoosh.analysis.analyzers.Analyzer", found %s'%
+                        type(self.analyzer),
+                    )
 
         self.setup()
         self.refresh_index(optimize=False)
@@ -425,7 +445,11 @@ class WhooshSearchBackend(BaseSearchBackend):
             'id': WHOOSH_ID(stored=True, unique=True),
             'django_ct': WHOOSH_ID(stored=True),
             'django_id': WHOOSH_ID(stored=True),
-            'text': TEXT(stored=True),
+            'text': TEXT(
+                stored=True,
+                analyzer=self.analyzer,  # Custom analyzer
+                lang=settings.LANGUAGE_CODE[:2],  # Fall back to configured language
+            ),
         }
 
         return Schema(**schema_fields)
