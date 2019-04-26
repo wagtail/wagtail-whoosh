@@ -16,7 +16,7 @@ WAGTAILSEARCH_BACKENDS = {
     'default': {
         'BACKEND': 'wagtail_whoosh.backend',
         'PATH': str(ROOT_DIR('search_index')),
-        'ANALYZER': 'path.to.my.analyzer',  # Optional
+        'SEARCH_CONFIG': 'fr',
     },
 }
 ```
@@ -33,16 +33,13 @@ result += Page2.objects.search(query).annotate_score("_score").results()
 return sorted(results, key=lambda r: r._score)
 ```
 
-### Language and custom Analyzer support
+### Language support
 
-By default `wagtail-whoosh` will use the Django setting `LANGUAGE_CODE` to
- automatically setup page text analysis according to your language. If this
- isn't desirable, or if Whoosh doesn't support your language out-of-the-box, 
- or for whatever reason you might have, it is possible to specify a custom
- analyzer by adding an `ANALYZER` to the seach backend config. This value
- should be either a dotted string to an analyzer instance or an analyzer
- Python object. See [Whoosh documentation](https://whoosh.readthedocs.io/en/latest/analysis.html)
- for more about analyzers.
+Whoosh includes pure-Python implementations of the Snowball stemmers and stop word lists for various languages adapted from NLTK.
+
+`('ar', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'hu', 'it', 'no', 'pt', 'ro', 'ru', 'es', 'sv', 'tr')`
+
+You can choose one and config in `SEARCH_CONFIG`
 
 ## NOT-Supported features
 
