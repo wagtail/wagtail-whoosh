@@ -471,7 +471,7 @@ class WhooshSearchBackend(BaseSearchBackend):
         return Schema(**schema_fields)
 
     def get_config(self):
-        return self.params.get('LANGUAGE')
+        return self.params.get('SEARCH_CONFIG')
 
     def get_index_for_model(self, model, db_alias=None):
         return Index(self, model, db_alias)
