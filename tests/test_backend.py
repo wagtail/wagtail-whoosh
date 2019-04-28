@@ -10,8 +10,13 @@ from wagtail.search.tests.test_backends import BackendTests
 from wagtail.tests.search import models
 
 
-sv_search_setttings = copy.deepcopy(settings.WAGTAILSEARCH_BACKENDS)
-sv_search_setttings['default']['SEARCH_CONFIG'] = 'sv'
+sv_search_setttings_language = copy.deepcopy(settings.WAGTAILSEARCH_BACKENDS)
+sv_search_setttings_language['default']['LANGUAGE'] = 'sv'
+
+from whoosh.analysis import LanguageAnalyzer
+analyzer_swedish = LanguageAnalyzer('sv')
+sv_search_setttings_analyzer = copy.deepcopy(settings.WAGTAILSEARCH_BACKENDS)
+sv_search_setttings_analyzer['default']['ANALYZER'] = analyzer_swedish
 
 
 class TestWhooshSearchBackend(BackendTests, TestCase):
@@ -39,7 +44,15 @@ class TestWhooshSearchBackend(BackendTests, TestCase):
             number_of_pages=99,
         )
 
-    @override_settings(WAGTAILSEARCH_BACKENDS=sv_search_setttings)
+    @override_settings(WAGTAILSEARCH_BACKENDS=sv_search_setttings_language)
+    def test_language(self):
+        self._setup_swe()
+        results = self.backend.search("nyhet", models.Book)
+        self.assertUnsortedListEqual([r.title for r in results], [
+            self.swedish_book.title,
+        ])
+
+    @override_settings(WAGTAILSEARCH_BACKENDS=sv_search_setttings_analyzer)
     def test_analyzer(self):
         self._setup_swe()
         results = self.backend.search("nyhet", models.Book)

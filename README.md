@@ -16,7 +16,7 @@ WAGTAILSEARCH_BACKENDS = {
     'default': {
         'BACKEND': 'wagtail_whoosh.backend',
         'PATH': str(ROOT_DIR('search_index')),
-        'SEARCH_CONFIG': 'fr',
+        'LANGUAGE': 'fr',
     },
 }
 ```
@@ -37,7 +37,30 @@ return sorted(results, key=lambda r: r._score)
 
 Whoosh includes pure-Python implementations of the Snowball stemmers and stop word lists for various languages adapted from NLTK.
 
+So you can use the built-in language support by setting like `'LANGUAGE': 'fr'`, the language support list is below.
+
 `('ar', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'hu', 'it', 'no', 'pt', 'ro', 'ru', 'es', 'sv', 'tr')`
+
+If you want more control or want to do customization, you can use `ANALYZER` instead of `LANGUAGE` here.
+
+> An analyzer is a function or callable class (a class with a __call__ method) that takes a unicode string and returns a generator of tokens
+
+You can set `ANALYZER` using an object reference or dotted module path.
+
+**NOTE: If ANALYZER is set, your LANGUAGE would be ignored**
+
+```
+from whoosh.analysis import LanguageAnalyzer
+analyzer_swedish = LanguageAnalyzer('sv')
+
+WAGTAILSEARCH_BACKENDS = {
+    'default': {
+        'BACKEND': 'wagtail_whoosh.backend',
+        'PATH': str(ROOT_DIR('search_index')),
+        'ANALYZER': analyzer_swedish,
+    },
+}
+```
 
 You can choose one and config in `SEARCH_CONFIG`
 
@@ -50,3 +73,4 @@ You can choose one and config in `SEARCH_CONFIG`
 ## Sponsor
 
 [Tomas Walch](https://github.com/tjwalch)
+

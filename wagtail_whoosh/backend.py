@@ -385,16 +385,38 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.use_file_storage = True
         self.post_limit = params.get("POST_LIMIT", 128 * 1024 * 1024)
         self.path = params.get("PATH")
+
         self.language = None
-        if params.get('SEARCH_CONFIG'):
-            # check if SEARCH_CONFIG is valid
-            if params.get('SEARCH_CONFIG') in lang.languages:
-                self.language = params.get('SEARCH_CONFIG')
+        language = params.get('LANGUAGE')
+        if language:
+            # check if LANGUAGE is valid
+            if language in lang.languages:
+                self.language = language
             else:
                 raise ImproperlyConfigured(
                     'Wagtail Whoosh Backend: Language %s could not be loaded' %
-                    params.get('SEARCH_CONFIG'),
+                    language,
                 )
+
+        self.analyzer = None
+        analyzer = params.get('ANALYZER')
+        if analyzer:
+            if isinstance(analyzer, str):
+                try:
+                    self.analyzer = import_string(analyzer)
+                except ImportError:
+                    raise ImproperlyConfigured(
+                        'Wagtail Whoosh Backend: Analyzer %s could not be loaded' %
+                        analyzer,
+                    )
+            elif isinstance(analyzer, analyzers.Analyzer):
+                self.analyzer = analyzer
+            else:
+                raise ImproperlyConfigured(
+                        'Wagtail Whoosh Backend analyzer: Expected string or subclass of '
+                        '"whoosh.analysis.analyzers.Analyzer", found %s'%
+                        type(analyzer),
+                    )
 
         self.setup()
         self.refresh_index(optimize=False)
@@ -443,13 +465,14 @@ class WhooshSearchBackend(BaseSearchBackend):
             'text': TEXT(
                 stored=True,
                 lang=self.language,
+                analyzer=self.analyzer,
             ),
         }
 
         return Schema(**schema_fields)
 
     def get_config(self):
-        return self.params.get('SEARCH_CONFIG')
+        return self.params.get('LANGUAGE')
 
     def get_index_for_model(self, model, db_alias=None):
         return Index(self, model, db_alias)
