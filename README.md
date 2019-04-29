@@ -62,8 +62,6 @@ WAGTAILSEARCH_BACKENDS = {
 }
 ```
 
-You can choose one and config in `SEARCH_CONFIG`
-
 ## NOT-Supported features
 
 1. `boosting` is not supported.
