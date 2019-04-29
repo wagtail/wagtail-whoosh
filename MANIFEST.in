@@ -12,4 +12,5 @@ include Makefile
 include requirements-dev.txt
 include runtests.py
 include tox.ini
+include CHANGELOG.txt
 graft tests
