@@ -412,10 +412,10 @@ class WhooshSearchBackend(BaseSearchBackend):
                 self.analyzer = analyzer
             else:
                 raise ImproperlyConfigured(
-                        'Wagtail Whoosh Backend analyzer: Expected string or subclass of '
-                        '"whoosh.analysis.analyzers.Analyzer", found %s'%
-                        type(analyzer),
-                    )
+                    'Wagtail Whoosh Backend analyzer: Expected string or subclass of '
+                    '"whoosh.analysis.analyzers.Analyzer", found %s' %
+                    type(analyzer),
+                )
 
         self.setup()
         self.refresh_index(optimize=False)

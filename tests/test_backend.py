@@ -9,11 +9,11 @@ from django.utils import timezone
 from wagtail.search.tests.test_backends import BackendTests
 from wagtail.tests.search import models
 
+from whoosh.analysis import LanguageAnalyzer
 
 sv_search_setttings_language = copy.deepcopy(settings.WAGTAILSEARCH_BACKENDS)
 sv_search_setttings_language['default']['LANGUAGE'] = 'sv'
 
-from whoosh.analysis import LanguageAnalyzer
 analyzer_swedish = LanguageAnalyzer('sv')
 sv_search_setttings_analyzer = copy.deepcopy(settings.WAGTAILSEARCH_BACKENDS)
 sv_search_setttings_analyzer['default']['ANALYZER'] = analyzer_swedish
