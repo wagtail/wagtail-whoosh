@@ -7,8 +7,12 @@ unittests:
 	python setup.py test
 
 flaketest:
+	flake8
+
+pylint:
 	# Check syntax and style
 	flake8
+	isort --recursive wagtail_whoosh
 
 checkmanifest:
 	# Check if all files are included in the sdist
