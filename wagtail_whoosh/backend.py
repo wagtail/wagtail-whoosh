@@ -18,11 +18,10 @@ from whoosh import qparser
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import NGRAMWORDS, TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
-from whoosh.qparser import FuzzyTermPlugin, MultifieldParser
+from whoosh.qparser import MultifieldParser
 from whoosh.writing import AsyncWriter
 
-from .utils import (get_boost, get_descendant_models, get_indexed_parents,
-                    unidecode)
+from .utils import get_boost, get_descendant_models, unidecode
 
 PK = "pk"
 AUTOCOMPLETE_SUFFIX = '_ngrams'
@@ -37,71 +36,75 @@ def _get_field_mapping(field):
     return field.field_name
 
 
-class ModelSchema:
+class WhooshModelSchema:
     def __init__(self, model):
         self.model = model
 
     def build_schema(self):
-        search_fields = dict(self._define_search_fields())
+        search_fields = dict(self._prepare_search_fields())
         schema_fields = {
             PK: WHOOSH_ID(stored=True, unique=True),
         }
         schema_fields.update(search_fields)
         return Schema(**schema_fields)
 
-    def _define_search_fields(self):
-        def _to_whoosh_field(field, field_name=None):
-            if isinstance(field, AutocompleteField) or (hasattr(field, 'partial_match') and field.partial_match):
-                whoosh_field = NGRAMWORDS(stored=True, minsize=2, maxsize=8, queryor=True)
-            else:
-                # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
-                whoosh_field = TEXT(phrase=True, stored=True, field_boost=get_boost(field))
+    @classmethod
+    def _to_whoosh_field(cls, field, field_name=None):
+        # If the field is AutocompleteField or has partial_match field, treat it as auto complete field
+        if isinstance(field, AutocompleteField) or \
+                (hasattr(field, 'partial_match') and field.partial_match):
+            # TODO: make NGRAMWORDS configurable
+            whoosh_field = NGRAMWORDS(stored=True, minsize=2, maxsize=8, queryor=True)
+        else:
+            # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
+            whoosh_field = TEXT(phrase=True, stored=True, field_boost=get_boost(field))
 
-            if not field_name:
-                field_name = _get_field_mapping(field)
-            return field_name, whoosh_field
+        if not field_name:
+            field_name = _get_field_mapping(field)
+        return field_name, whoosh_field
 
+    def _prepare_search_fields(self):
         for field in self.model.get_search_fields():
             if isinstance(field, RelatedFields):
                 for subfield in field.fields:
                     # Redefine field_name to avoid clashes
                     field_name = '{0}__{1}'.format(field.field_name, _get_field_mapping(subfield))
-                    yield _to_whoosh_field(subfield, field_name=field_name)
+                    yield self._to_whoosh_field(subfield, field_name=field_name)
             else:
-                yield _to_whoosh_field(field)
+                yield self._to_whoosh_field(field)
 
 
-class WhooshIndex:
+class WhooshModelIndex:
     def __init__(self, backend, model, db_alias=None):
         self.backend = backend
-        self.models = get_indexed_parents(model)
+        self.model = model
+        # TODO: support db_alias
         if db_alias is None:
             db_alias = DEFAULT_DB_ALIAS
         self.db_alias = db_alias
         self.name = model._meta.label
-        self.indicies = dict(self._open_indicies())
+        self.model_index = self._open_model_index()
 
-    def _open_indicies(self):
+    def _open_model_index(self):
         storage = self.backend.storage
-        for model in self.models:
-            label = model._meta.label
-            # if index doesn't exist, create
-            if not storage.index_exists(indexname=label):
-                schema = ModelSchema(model).build_schema()
-                storage.create_index(schema, indexname=label)
-            # return the opened index to work with
-            yield label, storage.open_index(indexname=label)
+        model = self.model
+        label = model._meta.label
+        # if index doesn't exist, create
+        if not storage.index_exists(indexname=label):
+            schema = WhooshModelSchema(model).build_schema()
+            storage.create_index(schema, indexname=label)
+        # return the opened index to work with
+        return storage.open_index(indexname=label)
 
-    def _close_indicies(self):
+    def _close_model_index(self):
         self.backend.storage.close()
 
     def add_model(self, model):
         # Adding done on initialisation
-        self._close_indicies()
+        self._close_model_index()
 
     def refresh(self):
-        for index in self.indicies.values():
-            index.refresh()
+        self.model_index.refresh()
 
     def prepare_value(self, value):
         if not value:
@@ -143,32 +146,32 @@ class WhooshIndex:
         return document
 
     def add_item(self, item):
-        for model in self.models:
-            doc = self._create_document(model, item)
-            index = self.indicies[model._meta.label]
-            writer = AsyncWriter(index)
-            writer.update_document(**doc)
-            writer.commit()
-        self._close_indicies()
+        model = self.model
+        doc = self._create_document(model, item)
+        index = self.model_index
+        writer = AsyncWriter(index)
+        writer.update_document(**doc)
+        writer.commit()
+        self._close_model_index()
 
-    def add_items(self, model, items):
-        for add_model in self.models:
-            index = self.indicies[add_model._meta.label]
-            writer = AsyncWriter(index)
-            for item in items:
-                doc = self._create_document(add_model, item)
-                writer.update_document(**doc)
-            writer.commit()
-        self._close_indicies()
+    def add_items(self, item_model, items):
+        model = self.model
+        index = self.model_index
+        writer = AsyncWriter(index)
+        for item in items:
+            doc = self._create_document(model, item)
+            writer.update_document(**doc)
+        writer.commit()
+        self._close_model_index()
 
     def delete_item(self, obj):
-        for model in self.models:
-            index = self.indicies[model._meta.label]
-            writer = index.writer()
-            writer.delete_by_term(PK, str(obj.pk))
-            writer.commit()
-            index.optimize()
-        self._close_indicies()
+        index = self.model_index
+        writer = index.writer()
+        writer.delete_by_term(PK, str(obj.pk))
+        writer.commit()
+        # TODO: do this in other method
+        index.optimize()
+        self._close_model_index()
 
     def __str__(self):
         return self.name
@@ -177,9 +180,9 @@ class WhooshIndex:
 class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.operator = kwargs.get('operator', None)
+        self.operator = kwargs.get('operator', self.DEFAULT_OPERATOR)
         self.field_names = list(self._get_fields_names())
-        self.schema = ModelSchema(self.queryset.model).build_schema()
+        self.schema = WhooshModelSchema(self.queryset.model).build_schema()
 
     def _get_fields_names(self):
         if self.fields:
@@ -201,7 +204,7 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 
     def _build_query_string(self, query=None):
         """
-            Converts Wagtail query operators to their Whoosh equivalents
+        Converts Wagtail query operators to their Whoosh equivalents
         """
         if query is None:
             query = self.query
@@ -237,22 +240,8 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
             '`%s` is not supported by the whoosh search backend.'
             % self.query.__class__.__name__)
 
-    def _get_group(self):
-        if self.operator and self.operator == 'and':
-            return qparser.AndGroup
-        elif isinstance(self.query, PlainText):
-            if self.query.operator == 'and':
-                return qparser.AndGroup
-        return qparser.OrGroup
-
-    def _get_plugins(self):
-        # Overridable
-        return [FuzzyTermPlugin()]
-
     def get_whoosh_query(self):
-        group = self._get_group()
-        parser = MultifieldParser(self.field_names, self.schema, group=group)
-        [parser.add_plugin(pin) for pin in self._get_plugins()]
+        parser = MultifieldParser(self.field_names, self.schema)
         return parser.parse(self._build_query_string())
 
     def _process_lookup(self, field, lookup, value):
@@ -274,15 +263,15 @@ class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
 
         return q
 
+    #####################################################################################
+    # this part is copied from wagtail/search/backends/db.py to make it work with filter
+    #####################################################################################
+
     def build_single_term_filter(self, term):
         term_query = models.Q()
         for field_name in self.fields_names:
             term_query |= models.Q(**{field_name + '__icontains': term})
         return term_query
-
-    #####################################################################################
-    # this part is copied from wagtail/search/backends/db.py to make it work with filter
-    #####################################################################################
 
     OPERATORS = {
         'and': AND,
@@ -338,35 +327,36 @@ class WhooshSearchResults(BaseSearchResults):
     supports_facet = False
 
     def _new_query_compiler(self, model):
-        if isinstance(self.query_compiler, WhooshAutocompleteQueryCompiler):
+        qc = self.query_compiler
+        if isinstance(qc, WhooshAutocompleteQueryCompiler):
             return WhooshAutocompleteQueryCompiler(
                 model.objects.none(),
-                self.query_compiler.query,
-                fields=self.query_compiler.fields,
-                operator=self.query_compiler.operator)
+                qc.query,
+                fields=qc.fields,
+                operator=qc.operator)
         return WhooshSearchQueryCompiler(
             model.objects.none(),
-            self.query_compiler.query,
-            fields=self.query_compiler.fields,
-            operator=self.query_compiler.operator)
+            qc.query,
+            fields=qc.fields,
+            operator=qc.operator)
 
     def _do_search(self):
         # Probably better way to get the model
         qc = self.query_compiler
         model = qc.queryset.model
-        query = qc.get_whoosh_query()
-        index = self.backend.storage.open_index(indexname=model._meta.label)
-        with index.searcher() as searcher:
-            results = searcher.search(query, limit=None)
-            score_map = dict([(r[PK], r.score) for r in results])
+
+        results = []
+        score_map = {}
+
         descendants = get_descendant_models(model)
         for descendant in descendants:
             query_compiler = self._new_query_compiler(descendant)
             query = query_compiler.get_whoosh_query()
             index = self.backend.storage.open_index(indexname=descendant._meta.label)
             with index.searcher() as searcher:
-                results = searcher.search(query, limit=None)
-                for result in results:
+                descendant_results = searcher.search(query, limit=None)
+                for result in descendant_results:
+                    results.append(result)
                     pk = result[PK]
                     # Add to the score map, or update if higher value
                     if pk not in score_map or score_map[pk] < result.score:
@@ -394,7 +384,6 @@ class WhooshSearchResults(BaseSearchResults):
         return results
 
     def _do_count(self):
-        # FIXME https://whoosh.readthedocs.io/en/latest/api/collectors.html#whoosh.collectors.Collector.count
         return len(self._do_search())
 
     def facet(self, field_name):
@@ -403,22 +392,28 @@ class WhooshSearchResults(BaseSearchResults):
 
 
 class WhooshSearchRebuilder:
-    def __init__(self, index):
-        self.index = index
+    def __init__(self, model_index):
+        self.model_index = model_index
 
     def start(self):
-        if self.index.backend.destroy_index:
+        """
+        TODO: https://whoosh.readthedocs.io/en/latest/indexing.html#id1
+        use writing.CLEAR instead of shutil.rmtree
+        """
+        if not self.model_index.backend.recreate_path_already:
             # Per the Whoosh mailing list, if wiping out everything from the index,
             # it's much more efficient to simply delete the index files.
-            shutil.rmtree(self.index.backend.path)
-            os.makedirs(self.index.backend.path)
-        # recreate + open indicies
-        self.index.indicies = dict(self.index._open_indicies())
-        return self.index
+            shutil.rmtree(self.model_index.backend.path)
+            os.makedirs(self.model_index.backend.path)
+
+            # we change flag so index directory would be only deleted one time when run update_index
+            self.model_index.backend.recreate_path_already = True
+
+        self.model_index.model_index = self.model_index._open_model_index()
+        return self.model_index
 
     def finish(self):
-        self.index.backend.destroy_index = False
-        self.index.refresh()
+        self.model_index.refresh()
 
 
 class WhooshSearchBackend(BaseSearchBackend):
@@ -435,7 +430,7 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.path = params.get("PATH")
         # Flag for rebuilder, we only want the index folder emptied by the
         # first WhooshSearchRebuilder ran
-        self.destroy_index = True
+        self.recreate_path_already = False
 
         self.check()
 
@@ -454,7 +449,7 @@ class WhooshSearchBackend(BaseSearchBackend):
             self.storage = FileStorage(self.path)
 
     def get_index_for_model(self, model, db_alias=None):
-        return WhooshIndex(self, model, db_alias)
+        return WhooshModelIndex(self, model, db_alias)
 
     def get_index_for_object(self, obj):
         return self.get_index_for_model(obj._meta.model, obj._state.db)
