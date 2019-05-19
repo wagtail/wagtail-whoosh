@@ -29,6 +29,26 @@ Set `./manage.py update_index` as cron job
 
 ## Features
 
+### Support autocomplete
+
+If you want to search `hello world`, you might need to use `hello` in previous versions. Now you can use `hel` and the backend would return the result.
+
+```
+# you need to define the search field in this way
+index.SearchField('title', partial_match=True)
+
+# or this way
+index.AutocompleteField('title')
+```
+
+### Specifying the fields to search
+
+```
+# Search just the title field
+>>> EventPage.objects.search("Event", fields=["title"])
+[<EventPage: Event 1>, <EventPage: Event 2>]
+```
+
 ### Score support
 
 ```
