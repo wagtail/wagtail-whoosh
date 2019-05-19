@@ -1,6 +1,11 @@
 Changelog
 =========
 
+0.2.2
+~~~~~~~~~~~~~~~~
+
+ * add LANGUAGE and ANALYZER support
+
 0.2.1
 ~~~~~~~~~~~~~~~~
 

@@ -2,9 +2,11 @@ import os
 import shutil
 from warnings import warn
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db import DEFAULT_DB_ALIAS, models
 from django.db.models import Case, Q, When
 from django.utils.encoding import force_text
+from django.utils.module_loading import import_string
 
 from wagtail.search.backends.base import (BaseSearchBackend,
                                           BaseSearchQueryCompiler,
@@ -14,11 +16,13 @@ from wagtail.search.index import (AutocompleteField, FilterField,
 from wagtail.search.query import And, Boost, MatchAll, Not, Or, PlainText
 from wagtail.search.utils import AND, OR
 
-from whoosh import qparser
+from whoosh import lang
+from whoosh.analysis import analyzers
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import NGRAMWORDS, TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
-from whoosh.qparser import MultifieldParser
+from whoosh.index import EmptyIndexError
+from whoosh.qparser import FuzzyTermPlugin, MultifieldParser, QueryParser
 from whoosh.writing import AsyncWriter
 
 from .utils import get_boost, get_descendant_models, unidecode
@@ -34,44 +38,6 @@ def _get_field_mapping(field):
     elif isinstance(field, AutocompleteField):
         return field.field_name + AUTOCOMPLETE_SUFFIX
     return field.field_name
-
-
-class WhooshModelSchema:
-    def __init__(self, model):
-        self.model = model
-
-    def build_schema(self):
-        search_fields = dict(self._prepare_search_fields())
-        schema_fields = {
-            PK: WHOOSH_ID(stored=True, unique=True),
-        }
-        schema_fields.update(search_fields)
-        return Schema(**schema_fields)
-
-    @classmethod
-    def _to_whoosh_field(cls, field, field_name=None):
-        # If the field is AutocompleteField or has partial_match field, treat it as auto complete field
-        if isinstance(field, AutocompleteField) or \
-                (hasattr(field, 'partial_match') and field.partial_match):
-            # TODO: make NGRAMWORDS configurable
-            whoosh_field = NGRAMWORDS(stored=True, minsize=2, maxsize=8, queryor=True)
-        else:
-            # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
-            whoosh_field = TEXT(phrase=True, stored=True, field_boost=get_boost(field))
-
-        if not field_name:
-            field_name = _get_field_mapping(field)
-        return field_name, whoosh_field
-
-    def _prepare_search_fields(self):
-        for field in self.model.get_search_fields():
-            if isinstance(field, RelatedFields):
-                for subfield in field.fields:
-                    # Redefine field_name to avoid clashes
-                    field_name = '{0}__{1}'.format(field.field_name, _get_field_mapping(subfield))
-                    yield self._to_whoosh_field(subfield, field_name=field_name)
-            else:
-                yield self._to_whoosh_field(field)
 
 
 class WhooshModelIndex:
@@ -91,7 +57,7 @@ class WhooshModelIndex:
         label = model._meta.label
         # if index doesn't exist, create
         if not storage.index_exists(indexname=label):
-            schema = WhooshModelSchema(model).build_schema()
+            schema = self.backend.build_schema(self.model)
             storage.create_index(schema, indexname=label)
         # return the opened index to work with
         return storage.open_index(indexname=label)
@@ -179,10 +145,12 @@ class WhooshModelIndex:
 
 class WhooshSearchQueryCompiler(BaseSearchQueryCompiler):
     def __init__(self, *args, **kwargs):
+        # TODO: Always pass the backend in query classes instead.
+        self.backend = kwargs.pop('backend')
         super().__init__(*args, **kwargs)
         self.operator = kwargs.get('operator', self.DEFAULT_OPERATOR)
         self.field_names = list(self._get_fields_names())
-        self.schema = WhooshModelSchema(self.queryset.model).build_schema()
+        self.schema = self.backend.build_schema(self.queryset.model)
 
     def _get_fields_names(self):
         if self.fields:
@@ -333,12 +301,16 @@ class WhooshSearchResults(BaseSearchResults):
                 model.objects.none(),
                 qc.query,
                 fields=qc.fields,
-                operator=qc.operator)
+                operator=qc.operator,
+                backend=self.backend
+            )
         return WhooshSearchQueryCompiler(
             model.objects.none(),
             qc.query,
             fields=qc.fields,
-            operator=qc.operator)
+            operator=qc.operator,
+            backend=self.backend
+        )
 
     def _do_search(self):
         # Probably better way to get the model
@@ -425,6 +397,7 @@ class WhooshSearchBackend(BaseSearchBackend):
     def __init__(self, params):
         super().__init__(params)
         self.params = params
+        self._config_params(params)
 
         self.use_file_storage = True
         self.path = params.get("PATH")
@@ -432,9 +405,42 @@ class WhooshSearchBackend(BaseSearchBackend):
         # first WhooshSearchRebuilder ran
         self.recreate_path_already = False
 
-        self.check()
+        self.check_storage()
 
-    def check(self):
+    def _config_params(self, params):
+        self.language = None
+        language = params.get('LANGUAGE')
+        if language:
+            # check if LANGUAGE is valid
+            if language in lang.languages:
+                self.language = language
+            else:
+                raise ImproperlyConfigured(
+                    'Wagtail Whoosh Backend: Language %s could not be loaded' %
+                    language,
+                )
+
+        self.analyzer = None
+        analyzer = params.get('ANALYZER')
+        if analyzer:
+            if isinstance(analyzer, str):
+                try:
+                    self.analyzer = import_string(analyzer)
+                except ImportError:
+                    raise ImproperlyConfigured(
+                        'Wagtail Whoosh Backend: Analyzer %s could not be loaded' %
+                        analyzer,
+                    )
+            elif isinstance(analyzer, analyzers.Analyzer):
+                self.analyzer = analyzer
+            else:
+                raise ImproperlyConfigured(
+                    'Wagtail Whoosh Backend analyzer: Expected string or subclass of '
+                    '"whoosh.analysis.analyzers.Analyzer", found %s' %
+                    type(analyzer),
+                )
+
+    def check_storage(self):
         # Make sure the index is there.
         if self.use_file_storage and not os.path.exists(self.path):
             os.makedirs(self.path)
@@ -465,6 +471,56 @@ class WhooshSearchBackend(BaseSearchBackend):
 
     def delete(self, obj):
         self.get_index_for_object(obj).delete_item(obj)
+
+    # TODO: Always pass the backend in query classes.
+    def query_compiler_class(self, *args, **kwargs):
+        kwargs['backend'] = self
+        return WhooshSearchQueryCompiler(*args, **kwargs)
+
+    def autocomplete_query_compiler_class(self, *args, **kwargs):
+        kwargs['backend'] = self
+        return WhooshAutocompleteQueryCompiler(*args, **kwargs)
+
+    ################################################################################
+    #  Custom methods about schema
+    ################################################################################
+
+    def build_schema(self, model):
+        search_fields = dict(self._prepare_search_fields(model))
+        schema_fields = {
+            PK: WHOOSH_ID(stored=True, unique=True),
+        }
+        schema_fields.update(search_fields)
+        return Schema(**schema_fields)
+
+    def _to_whoosh_field(self, field, field_name=None):
+        # If the field is AutocompleteField or has partial_match field, treat it as auto complete field
+        if isinstance(field, AutocompleteField) or \
+                (hasattr(field, 'partial_match') and field.partial_match):
+            # TODO: make NGRAMWORDS configurable
+            whoosh_field = NGRAMWORDS(stored=False, minsize=2, maxsize=8, queryor=True)
+        else:
+            # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
+            whoosh_field = TEXT(
+                stored=False,
+                field_boost=get_boost(field),
+                lang=self.language,
+                analyzer=self.analyzer,
+            )
+
+        if not field_name:
+            field_name = _get_field_mapping(field)
+        return field_name, whoosh_field
+
+    def _prepare_search_fields(self, model):
+        for field in model.get_search_fields():
+            if isinstance(field, RelatedFields):
+                for subfield in field.fields:
+                    # Redefine field_name to avoid clashes
+                    field_name = '{0}__{1}'.format(field.field_name, _get_field_mapping(subfield))
+                    yield self._to_whoosh_field(subfield, field_name=field_name)
+            else:
+                yield self._to_whoosh_field(field)
 
 
 SearchBackend = WhooshSearchBackend
