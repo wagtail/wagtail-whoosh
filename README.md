@@ -68,11 +68,5 @@ WAGTAILSEARCH_BACKENDS = {
 
 ## NOT-Supported features
 
-1. `boosting` is not supported.
-2. `facet` is not supported.
-3. `autocomplete` is not supported.
-
-## Sponsor
-
-[Tomas Walch](https://github.com/tjwalch)
+1. `facet` is not supported.
 
