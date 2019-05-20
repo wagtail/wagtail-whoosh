@@ -21,8 +21,7 @@ from whoosh.analysis import analyzers
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import NGRAMWORDS, TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
-from whoosh.index import EmptyIndexError
-from whoosh.qparser import FuzzyTermPlugin, MultifieldParser, QueryParser
+from whoosh.qparser import MultifieldParser
 from whoosh.writing import AsyncWriter
 
 from .utils import get_boost, get_descendant_models, unidecode
