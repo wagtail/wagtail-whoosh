@@ -375,6 +375,7 @@ class WhooshSearchResults(BaseSearchResults):
 class WhooshSearchRebuilder:
     def __init__(self, model_index):
         self.model_index = model_index
+        self.model_index.rebuilding = True
 
     def start(self):
         """
