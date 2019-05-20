@@ -86,7 +86,27 @@ WAGTAILSEARCH_BACKENDS = {
 }
 ```
 
+### Optimisations
+
+By default the Whoosh indexer uses 1 processor and 128mb of memory max. This can be changed using the `PROCS` and `Memory` options.
+
+e.g.
+
+```Python
+
+WAGTAILSEARCH_BACKENDS = {
+    'default': {
+        'BACKEND': 'wagtail_whoosh.backend',
+        'PATH': str(ROOT_DIR('search_index')),
+        'PROCS': 4,
+        'MEMORY': 2048,
+    },
+}
+```
+
+note: memory is calculated (per processor)[https://whoosh.readthedocs.io/en/latest/batch.html#the-procs-parameter], so the above configuration can use up to 8Gb of memory.
+
+
 ## NOT-Supported features
 
 1. `facet` is not supported.
-

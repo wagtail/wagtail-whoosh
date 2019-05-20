@@ -47,6 +47,7 @@ class WhooshModelIndex:
         if db_alias is None:
             db_alias = DEFAULT_DB_ALIAS
         self.db_alias = db_alias
+        self.rebuilding = False
         self.name = model._meta.label
         self.model_index = self._open_model_index()
 
@@ -63,6 +64,15 @@ class WhooshModelIndex:
 
     def _close_model_index(self):
         self.backend.storage.close()
+
+    def _writer_args(self):
+        args = {
+            'limitmb': self.backend.memory,
+            'procs': self.backend.processors,
+        }
+        if self.rebuilding:
+            args.update({'multisegment': True})
+        return args
 
     def add_model(self, model):
         # Adding done on initialisation
@@ -114,7 +124,7 @@ class WhooshModelIndex:
         model = self.model
         doc = self._create_document(model, item)
         index = self.model_index
-        writer = AsyncWriter(index)
+        writer = AsyncWriter(index, writerargs=self._writer_args())
         writer.update_document(**doc)
         writer.commit()
         self._close_model_index()
@@ -122,7 +132,7 @@ class WhooshModelIndex:
     def add_items(self, item_model, items):
         model = self.model
         index = self.model_index
-        writer = AsyncWriter(index)
+        writer = AsyncWriter(index, writerargs=self._writer_args())
         for item in items:
             doc = self._create_document(model, item)
             writer.update_document(**doc)
@@ -400,6 +410,8 @@ class WhooshSearchBackend(BaseSearchBackend):
 
         self.use_file_storage = True
         self.path = params.get("PATH")
+        self.processors = params.get("PROCS", 1)
+        self.memory = params.get("MEMORY", 128)
         # Flag for rebuilder, we only want the index folder emptied by the
         # first WhooshSearchRebuilder ran
         self.recreate_path_already = False
