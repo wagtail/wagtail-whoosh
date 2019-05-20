@@ -412,6 +412,7 @@ class WhooshSearchBackend(BaseSearchBackend):
         self.path = params.get("PATH")
         self.processors = params.get("PROCS", 1)
         self.memory = params.get("MEMORY", 128)
+        self.ngram_length = params.get("NGRAM_LENGTH", (2, 8))
         # Flag for rebuilder, we only want the index folder emptied by the
         # first WhooshSearchRebuilder ran
         self.recreate_path_already = False
@@ -508,8 +509,8 @@ class WhooshSearchBackend(BaseSearchBackend):
         # If the field is AutocompleteField or has partial_match field, treat it as auto complete field
         if isinstance(field, AutocompleteField) or \
                 (hasattr(field, 'partial_match') and field.partial_match):
-            # TODO: make NGRAMWORDS configurable
-            whoosh_field = NGRAMWORDS(stored=False, minsize=2, maxsize=8, queryor=True)
+            whoosh_field = NGRAMWORDS(
+                stored=False, minsize=self.ngram_length[0], maxsize=self.ngram_length[1], queryor=True)
         else:
             # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
             whoosh_field = TEXT(

@@ -33,7 +33,7 @@ Set `./manage.py update_index` as cron job
 
 If you want to search `hello world`, you might need to use `hello` in previous versions. Now you can use `hel` and the backend would return the result.
 
-```
+```python
 # you need to define the search field in this way
 index.SearchField('title', partial_match=True)
 
@@ -43,7 +43,7 @@ index.AutocompleteField('title')
 
 ### Specifying the fields to search
 
-```
+```python
 # Search just the title field
 >>> EventPage.objects.search("Event", fields=["title"])
 [<EventPage: Event 1>, <EventPage: Event 2>]
@@ -51,7 +51,7 @@ index.AutocompleteField('title')
 
 ### Score support
 
-```
+```python
 results = Page1.objects.search(query).annotate_score("_score").results()
 result += Page2.objects.search(query).annotate_score("_score").results()
 return sorted(results, key=lambda r: r._score)
@@ -86,13 +86,13 @@ WAGTAILSEARCH_BACKENDS = {
 }
 ```
 
-### Optimisations
+## Optimisations
 
-By default the Whoosh indexer uses 1 processor and 128mb of memory max. This can be changed using the `PROCS` and `Memory` options.
+### Indexing speed
 
-e.g.
+By default the Whoosh indexer uses 1 processor and 128mb of memory max. This can be changed using the `PROCS` and `MEMORY` options:
 
-```Python
+```python
 
 WAGTAILSEARCH_BACKENDS = {
     'default': {
@@ -104,7 +104,22 @@ WAGTAILSEARCH_BACKENDS = {
 }
 ```
 
-note: memory is calculated (per processor)[https://whoosh.readthedocs.io/en/latest/batch.html#the-procs-parameter], so the above configuration can use up to 8Gb of memory.
+note: memory is calculated [per processor](https://whoosh.readthedocs.io/en/latest/batch.html#the-procs-parameter), so the above configuration can use up to 8Gb of memory.
+
+### NGRAM lengths
+
+The default minimum length for NGRAM words is 2, and the maximum is 8. For indexes with lots of partial match fields, or languages other than English, this could be too large. It can be customised using the `NGRAM_LENGTH` option:
+
+```python
+WAGTAILSEARCH_BACKENDS = {
+    'default': {
+        'BACKEND': 'wagtail_whoosh.backend',
+        'PATH': str(ROOT_DIR('search_index')),
+        'NGRAM_LENGTH': (2, 4),
+    },
+}
+```
+[further reading](https://whoosh.readthedocs.io/en/latest/ngrams.html#indexing-and-searching-n-grams)
 
 
 ## NOT-Supported features
