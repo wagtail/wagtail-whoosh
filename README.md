@@ -90,7 +90,7 @@ WAGTAILSEARCH_BACKENDS = {
 
 ### Indexing speed
 
-By default the Whoosh indexer uses 1 processor and 128mb of memory max. This can be changed using the `PROCS` and `MEMORY` options:
+By default the Whoosh indexer uses 1 processor and 128MB of memory max. This can be changed using the `PROCS` and `MEMORY` options:
 
 ```python
 
@@ -104,7 +104,7 @@ WAGTAILSEARCH_BACKENDS = {
 }
 ```
 
-note: memory is calculated [per processor](https://whoosh.readthedocs.io/en/latest/batch.html#the-procs-parameter), so the above configuration can use up to 8Gb of memory.
+note: memory is calculated [per processor](https://whoosh.readthedocs.io/en/latest/batch.html#the-procs-parameter), so the above configuration can use up to 8GB of memory.
 
 ### NGRAM lengths
 
