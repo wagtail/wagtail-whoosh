@@ -7,16 +7,42 @@ DATABASES = {
     }
 }
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'wagtail_search_benchmark',
+#     }
+# }
+
 INSTALLED_APPS = [
+    'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+
+    'wagtail.contrib.forms',
+    'wagtail.contrib.redirects',
+    'wagtail.embeds',
+    'wagtail.sites',
+    'wagtail.users',
+    'wagtail.snippets',
+    'wagtail.documents',
+    'wagtail.images',
+    'wagtail.search',
+    'wagtail.admin',
+    'wagtail.core',
 
     'modelcluster',
     'taggit',
 
-    'wagtail.core',
-    'wagtail.search',
     'wagtail.tests.search',
+
+    'tests.project',
+
+    # you can not make it work with sqlite, we only use it when do benchmark test
+    # 'wagtail.contrib.postgres_search',
 
     'wagtail_whoosh',
 ]
@@ -26,17 +52,10 @@ WAGTAILSEARCH_BACKENDS = {
         'BACKEND': 'wagtail_whoosh.backend',
         'PATH': 'test_search_index'
     },
+    # 'db': {
+    #     'BACKEND': 'wagtail.search.backends.db',
+    # },
+    # 'postgres': {
+    #     'BACKEND': 'wagtail.contrib.postgres_search.backend',
+    # },
 }
-
-
-# Don't run migrations, just create tables.
-
-class DisableMigrations(object):
-    def __contains__(self, item):
-        return True
-
-    def __getitem__(self, item):
-        return None
-
-
-MIGRATION_MODULES = DisableMigrations()

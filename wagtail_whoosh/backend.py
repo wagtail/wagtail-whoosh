@@ -454,6 +454,11 @@ class WhooshSearchBackend(BaseSearchBackend):
         if self.use_file_storage:
             self.storage = FileStorage(self.path)
 
+    def reset_index(self):
+        shutil.rmtree(self.path)
+        os.makedirs(self.path)
+        self.check_storage()
+
     def get_index_for_model(self, model, db_alias=None):
         return WhooshModelIndex(self, model, db_alias)
 

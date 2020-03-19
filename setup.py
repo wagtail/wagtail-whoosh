@@ -36,7 +36,7 @@ setup(
     ],
     install_requires=[
         "Django>=2.0,<3.0",
-        "Wagtail>=2.3,<2.7",
+        "Wagtail>=2.3,<2.8",
         "Whoosh>=2.7,<2.8",
     ],
     test_suite='runtests.runtests'

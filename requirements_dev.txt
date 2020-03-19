@@ -9,3 +9,10 @@ autopep8==1.3.5
 flake8==3.5.0
 isort==4.3.4
 pycodestyle==2.3.1
+
+# benchmark test
+psycopg2-binary==2.7.5
+
+Django>=2.0,<2.1
+Wagtail==2.7
+Whoosh>=2.7,<2.8
