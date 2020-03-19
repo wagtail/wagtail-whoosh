@@ -1,36 +1,31 @@
 language: python
 cache: pip
-dist: trusty
+dist: xenial
 
 matrix:
   include:
-   - env: TOXENV=dj20-wagtail22-py34
-     python: 3.4
    - env: TOXENV=dj20-wagtail22-py35
      python: 3.5
    - env: TOXENV=dj20-wagtail22-py36
      python: 3.6
-   - env: TOXENV=dj20-wagtail23-py34
-     python: 3.4
    - env: TOXENV=dj20-wagtail23-py35
      python: 3.5
    - env: TOXENV=dj20-wagtail23-py36
      python: 3.6
-   - env: TOXENV=dj20-wagtail24-py34
-     python: 3.4
    - env: TOXENV=dj20-wagtail24-py35
      python: 3.5
    - env: TOXENV=dj20-wagtail24-py36
      python: 3.6
-   - env: TOXENV=dj20-wagtail25-py34
-     python: 3.4
    - env: TOXENV=dj20-wagtail25-py35
      python: 3.5
    - env: TOXENV=dj20-wagtail25-py36
      python: 3.6
 
-install:
-  - pip install tox codecov
+# command to install dependencies, e.g. pip install -r requirements.txt --use-mirrors
+install: pip install -r requirements_test.txt
 
-script:
-  tox
+# command to run tests using coverage, e.g. python setup.py test
+script: tox -e $TOXENV
+
+after_success:
+  - codecov -e TOXENV
