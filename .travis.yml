@@ -4,22 +4,43 @@ dist: xenial
 
 matrix:
   include:
-   - env: TOXENV=dj20-wagtail22-py35
-     python: 3.5
-   - env: TOXENV=dj20-wagtail22-py36
-     python: 3.6
-   - env: TOXENV=dj20-wagtail23-py35
-     python: 3.5
-   - env: TOXENV=dj20-wagtail23-py36
-     python: 3.6
-   - env: TOXENV=dj20-wagtail24-py35
-     python: 3.5
-   - env: TOXENV=dj20-wagtail24-py36
-     python: 3.6
-   - env: TOXENV=dj20-wagtail25-py35
-     python: 3.5
-   - env: TOXENV=dj20-wagtail25-py36
-     python: 3.6
+    # Wagtail 2.3 LTS to cover support until 2.7
+    - env: TOXENV=dj20-wagtail23-py34
+      python: 3.4
+    - env: TOXENV=dj20-wagtail23-py35
+      python: 3.5
+    - env: TOXENV=dj20-wagtail23-py36
+      python: 3.6
+    - env: TOXENV=dj21-wagtail23-py35
+      python: 3.5
+    - env: TOXENV=dj21-wagtail23-py36
+      python: 3.6
+
+    # Wagtail 2.7 LTS
+    - env: TOXENV=dj20-wagtail27-py35
+      python: 3.5
+    - env: TOXENV=dj20-wagtail27-py36
+      python: 3.6
+    - env: TOXENV=dj20-wagtail27-py37
+      python: 3.7
+    - env: TOXENV=dj20-wagtail27-py38
+      python: 3.8
+    - env: TOXENV=dj21-wagtail27-py35
+      python: 3.5
+    - env: TOXENV=dj21-wagtail27-py36
+      python: 3.6
+    - env: TOXENV=dj21-wagtail27-py37
+      python: 3.7
+    - env: TOXENV=dj21-wagtail27-py38
+      python: 3.8
+    - env: TOXENV=dj22-wagtail27-py35
+      python: 3.5
+    - env: TOXENV=dj22-wagtail27-py36
+      python: 3.6
+    - env: TOXENV=dj22-wagtail27-py37
+      python: 3.7
+    - env: TOXENV=dj22-wagtail27-py38
+      python: 3.8
 
 # command to install dependencies, e.g. pip install -r requirements.txt --use-mirrors
 install: pip install -r requirements_test.txt
