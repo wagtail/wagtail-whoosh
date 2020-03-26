@@ -1,3 +1,4 @@
+graft tests
 global-exclude __pycache__
 global-exclude *.py[co]
 global-exclude .DS_Store
@@ -14,4 +15,3 @@ include requirements_test.txt
 include runtests.py
 include tox.ini
 include CHANGELOG.txt
-graft tests
