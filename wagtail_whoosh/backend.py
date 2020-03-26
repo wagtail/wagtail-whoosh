@@ -21,8 +21,7 @@ from whoosh.analysis import analyzers
 from whoosh.fields import ID as WHOOSH_ID
 from whoosh.fields import NGRAMWORDS, TEXT, Schema
 from whoosh.filedb.filestore import FileStorage
-from whoosh.index import EmptyIndexError
-from whoosh.qparser import FuzzyTermPlugin, MultifieldParser, QueryParser
+from whoosh.qparser import MultifieldParser
 from whoosh.writing import AsyncWriter
 
 from .utils import get_boost, get_descendant_models, unidecode
@@ -48,6 +47,7 @@ class WhooshModelIndex:
         if db_alias is None:
             db_alias = DEFAULT_DB_ALIAS
         self.db_alias = db_alias
+        self.rebuilding = False
         self.name = model._meta.label
         self.model_index = self._open_model_index()
 
@@ -64,6 +64,15 @@ class WhooshModelIndex:
 
     def _close_model_index(self):
         self.backend.storage.close()
+
+    def _writer_args(self):
+        args = {
+            'limitmb': self.backend.memory,
+            'procs': self.backend.processors,
+        }
+        if self.rebuilding:
+            args.update({'multisegment': True})
+        return args
 
     def add_model(self, model):
         # Adding done on initialisation
@@ -115,7 +124,7 @@ class WhooshModelIndex:
         model = self.model
         doc = self._create_document(model, item)
         index = self.model_index
-        writer = AsyncWriter(index)
+        writer = AsyncWriter(index, writerargs=self._writer_args())
         writer.update_document(**doc)
         writer.commit()
         self._close_model_index()
@@ -123,7 +132,7 @@ class WhooshModelIndex:
     def add_items(self, item_model, items):
         model = self.model
         index = self.model_index
-        writer = AsyncWriter(index)
+        writer = AsyncWriter(index, writerargs=self._writer_args())
         for item in items:
             doc = self._create_document(model, item)
             writer.update_document(**doc)
@@ -366,6 +375,7 @@ class WhooshSearchResults(BaseSearchResults):
 class WhooshSearchRebuilder:
     def __init__(self, model_index):
         self.model_index = model_index
+        self.model_index.rebuilding = True
 
     def start(self):
         """
@@ -401,6 +411,9 @@ class WhooshSearchBackend(BaseSearchBackend):
 
         self.use_file_storage = True
         self.path = params.get("PATH")
+        self.processors = params.get("PROCS", 1)
+        self.memory = params.get("MEMORY", 128)
+        self.ngram_length = params.get("NGRAM_LENGTH", (2, 8))
         # Flag for rebuilder, we only want the index folder emptied by the
         # first WhooshSearchRebuilder ran
         self.recreate_path_already = False
@@ -454,6 +467,11 @@ class WhooshSearchBackend(BaseSearchBackend):
         if self.use_file_storage:
             self.storage = FileStorage(self.path)
 
+    def reset_index(self):
+        shutil.rmtree(self.path)
+        os.makedirs(self.path)
+        self.check_storage()
+
     def get_index_for_model(self, model, db_alias=None):
         return WhooshModelIndex(self, model, db_alias)
 
@@ -497,8 +515,8 @@ class WhooshSearchBackend(BaseSearchBackend):
         # If the field is AutocompleteField or has partial_match field, treat it as auto complete field
         if isinstance(field, AutocompleteField) or \
                 (hasattr(field, 'partial_match') and field.partial_match):
-            # TODO: make NGRAMWORDS configurable
-            whoosh_field = NGRAMWORDS(stored=False, minsize=2, maxsize=8, queryor=True)
+            whoosh_field = NGRAMWORDS(
+                stored=False, minsize=self.ngram_length[0], maxsize=self.ngram_length[1], queryor=True)
         else:
             # TODO other types of fields https://whoosh.readthedocs.io/en/latest/api/fields.htm
             whoosh_field = TEXT(
