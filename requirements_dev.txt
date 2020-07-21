@@ -14,5 +14,5 @@ pycodestyle==2.3.1
 psycopg2-binary==2.7.5
 
 Django>=2.0,<2.1
-Wagtail==2.7
+Wagtail==2.7.4
 Whoosh>=2.7,<2.8
