@@ -13,5 +13,8 @@ include Makefile
 include requirements_dev.txt
 include requirements_test.txt
 include runtests.py
+include manage.py
 include tox.ini
 include CHANGELOG.txt
+include pyproject.toml
+
