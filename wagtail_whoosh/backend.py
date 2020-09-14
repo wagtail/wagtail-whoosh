@@ -331,9 +331,12 @@ class WhooshSearchResults(BaseSearchResults):
 
         descendants = get_descendant_models(model)
         for descendant in descendants:
+            label = descendant._meta.label
+            if not self.backend.storage.index_exists(indexname=label):
+                continue
+            index = self.backend.storage.open_index(indexname=label)
             query_compiler = self._new_query_compiler(descendant)
             query = query_compiler.get_whoosh_query()
-            index = self.backend.storage.open_index(indexname=descendant._meta.label)
             with index.searcher() as searcher:
                 descendant_results = searcher.search(query, limit=None)
                 for result in descendant_results:
