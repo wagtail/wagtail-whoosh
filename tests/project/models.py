@@ -8,6 +8,6 @@ class Article(Indexed, Model):
     body = RichTextField()
 
     search_fields = [
-        SearchField('title', partial_match=True, boost=2),
-        SearchField('body'),
+        SearchField("title", partial_match=True, boost=2),
+        SearchField("body"),
     ]

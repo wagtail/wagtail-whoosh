@@ -7,11 +7,11 @@ unittests:
 	python setup.py test
 
 flaketest:
-	flake8
+	flake8 wagtail_whoosh
 
 pylint:
 	# Check syntax and style
-	flake8
+	flake8 wagtail_whoosh
 	isort --recursive wagtail_whoosh
 
 checkmanifest:
