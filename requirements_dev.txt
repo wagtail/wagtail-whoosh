@@ -15,5 +15,5 @@ black==20.8b1
 psycopg2-binary==2.7.5
 
 Django>=2.0,<2.1
-Wagtail==2.7.4
+Wagtail==2.11.8
 Whoosh>=2.7,<2.8
